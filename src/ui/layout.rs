@@ -1,70 +1,70 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Flex, Layout, Rect},
-    widgets::{Clear, Paragraph, Wrap},
+    layout::{Constraint, Direction, Layout},
 };
 
 use crate::app::{AppMode, AppState};
-use crate::ui::widgets::pane_block;
+use crate::ui::cover_art::CoverArtRenderer;
 
-pub fn render_app(frame: &mut Frame<'_>, app: &AppState) {
+pub fn render_app(frame: &mut Frame<'_>, app: &AppState, cover_art: &mut CoverArtRenderer) {
     if app.mode == AppMode::Auth {
         super::auth::render(frame, frame.area(), app);
         return;
     }
 
+    let area = Layout::default()
+        .constraints([Constraint::Min(1)])
+        .margin(1)
+        .split(frame.area())[0];
+
     let vertical = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([
-            Constraint::Length(4),
             Constraint::Min(1),
-            Constraint::Length(5),
+            Constraint::Length(app.layout.playbar_height.max(4)),
         ])
-        .split(frame.area());
+        .split(area);
 
+    let sidebar_width = app.layout.sidebar_width_percent.clamp(14, 40);
     let middle = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(vertical[1]);
-
-    let sidebar = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(middle[0]);
-
-    super::header::render(frame, vertical[0], app);
-    super::sidebar::render_library(frame, sidebar[0], app);
-    super::sidebar::render_playlists(frame, sidebar[1], app);
-    super::content::render(frame, middle[1], app);
-    super::playbar::render(frame, vertical[2], app);
-
-    if app.show_help {
-        render_help_overlay(frame, app);
-    }
-}
-
-fn render_help_overlay(frame: &mut Frame<'_>, app: &AppState) {
-    let area = centered_rect(frame.area(), 72, 14);
-    let text = app.help_overlay_lines().join("\n");
-    let popup = Paragraph::new(text)
-        .block(pane_block("Help", true))
-        .wrap(Wrap { trim: true });
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(popup, area);
-}
-
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(width.min(area.width.saturating_sub(2)))])
-        .flex(Flex::Center)
+        .spacing(1)
+        .constraints([
+            Constraint::Percentage(sidebar_width),
+            Constraint::Percentage(100 - sidebar_width),
+        ])
         .split(vertical[0]);
 
-    horizontal[0]
+    let library_height = app.layout.library_height.max(4);
+    let sidebar = Layout::default()
+        .direction(Direction::Vertical)
+        .spacing(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(library_height),
+            Constraint::Min(1),
+        ])
+        .split(middle[0]);
+
+    let sidebar_header = Layout::default()
+        .direction(Direction::Horizontal)
+        .spacing(1)
+        .constraints([Constraint::Min(1), Constraint::Length(9)])
+        .split(sidebar[0]);
+
+    super::header::render_search(frame, sidebar_header[0], app);
+    super::header::render_help(frame, sidebar_header[1], app);
+    super::sidebar::render_library(frame, sidebar[1], app);
+    super::sidebar::render_playlists(frame, sidebar[2], app);
+    super::content::render(frame, middle[1], app);
+    super::playbar::render(frame, vertical[1], app, cover_art);
+
+    if app.show_welcome {
+        super::welcome::render(frame, middle[1], app);
+    }
+
+    if app.show_help {
+        super::help::render(frame, frame.area(), app);
+    }
 }

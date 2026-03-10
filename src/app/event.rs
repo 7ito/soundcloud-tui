@@ -83,6 +83,14 @@ pub enum AppEvent {
         query: String,
         error: String,
     },
+    CoverArtLoaded {
+        url: String,
+        bytes: Vec<u8>,
+    },
+    CoverArtFailed {
+        url: String,
+        error: String,
+    },
     PlaybackQueued {
         session: AuthorizedSession,
         title: String,

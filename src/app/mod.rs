@@ -13,4 +13,4 @@ pub use command::AppCommand;
 pub use event::AppEvent;
 pub use playback::{PlaybackIntent, RepeatMode};
 pub use route::{Focus, Route};
-pub use state::AppState;
+pub use state::{AppState, HelpRow, LayoutState};

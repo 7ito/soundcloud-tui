@@ -12,7 +12,7 @@ fn library_navigation_changes_route() {
 }
 
 #[test]
-fn pane_focus_cycles_back_to_search() {
+fn pane_focus_cycles_across_main_panes_only() {
     let mut app = AppState::new();
 
     app.apply(Action::FocusNext);
@@ -20,5 +20,5 @@ fn pane_focus_cycles_back_to_search() {
     app.apply(Action::FocusNext);
     app.apply(Action::FocusNext);
 
-    assert_eq!(app.focus, Focus::Search);
+    assert_eq!(app.focus, Focus::Library);
 }

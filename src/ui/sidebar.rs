@@ -6,7 +6,7 @@ use ratatui::{
 
 use crate::{
     app::{AppState, Focus},
-    ui::widgets::{pane_block, selected_row_style},
+    ui::widgets::{HIGHLIGHT_SYMBOL, pane_block, selected_row_style},
 };
 
 pub fn render_library(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -26,7 +26,7 @@ pub fn render_library(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let list = List::new(items)
         .block(pane_block("Library", app.focus == Focus::Library))
         .highlight_style(selected_row_style())
-        .highlight_symbol("> ");
+        .highlight_symbol(HIGHLIGHT_SYMBOL);
     let mut state = ListState::default();
     state.select(Some(app.selected_library));
 
@@ -55,7 +55,7 @@ pub fn render_playlists(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let list = List::new(items)
         .block(pane_block(title.as_str(), app.focus == Focus::Playlists))
         .highlight_style(selected_row_style())
-        .highlight_symbol("> ");
+        .highlight_symbol(HIGHLIGHT_SYMBOL);
     let mut state = ListState::default();
     state.select((!app.playlists.is_empty()).then_some(app.selected_playlist));
 

@@ -6,8 +6,8 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppState, Focus},
-    ui::widgets::{header_style, pane_block, selected_row_style},
+    app::{AppState, Focus, Route},
+    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -17,43 +17,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     frame.render_widget(block, area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(1)])
-        .split(inner);
+    let content_area = if app.route == Route::Search {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
 
-    let mut summary_lines = vec![
-        Line::from(view.subtitle.clone()),
-        Line::from(format!("State: {}", view.state_label)),
-        Line::from(app.auth_summary.as_str()),
-        Line::from(format!(
-            "Focus {} | Route {} | Viewport {}x{}",
-            app.focus.label(),
-            app.route_title(),
-            app.viewport.width,
-            app.viewport.height
-        )),
-    ];
-    if let Some(help) = &view.help_message {
-        summary_lines.push(Line::from(help.clone()));
-    }
-
-    let summary = Paragraph::new(summary_lines).wrap(Wrap { trim: true });
-    frame.render_widget(summary, chunks[0]);
+        let summary = Paragraph::new(Line::from(view.subtitle.clone())).wrap(Wrap { trim: true });
+        frame.render_widget(summary, chunks[0]);
+        chunks[1]
+    } else {
+        inner
+    };
 
     if view.rows.is_empty() {
-        let mut empty_lines = vec![
-            Line::from(view.state_label.clone()),
-            Line::from(""),
-            Line::from(view.empty_message),
-        ];
-        if let Some(help) = &view.help_message {
-            empty_lines.push(Line::from(""));
-            empty_lines.push(Line::from(help.clone()));
-        }
-
-        let empty = Paragraph::new(empty_lines).wrap(Wrap { trim: true });
-        frame.render_widget(empty, chunks[1]);
+        let empty = Paragraph::new(view.empty_message).wrap(Wrap { trim: true });
+        frame.render_widget(empty, content_area);
     } else {
         let rows = view.rows.iter().map(|row| {
             Row::new(
@@ -77,10 +56,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .header(header)
         .row_highlight_style(selected_row_style())
         .column_spacing(1)
-        .highlight_symbol("> ");
+        .highlight_symbol(HIGHLIGHT_SYMBOL);
 
         let mut state = TableState::default();
         state.select(Some(app.selected_content.min(view.rows.len() - 1)));
-        frame.render_stateful_widget(table, chunks[1], &mut state);
+        frame.render_stateful_widget(table, content_area, &mut state);
     }
 }

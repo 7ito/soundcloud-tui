@@ -16,7 +16,7 @@ use soundcloud_tui::{
     input::events::EventHandler,
     player::{command::PlayerCommand, runtime::PlayerHandle},
     soundcloud::{auth, auth::AuthorizedSession, service::SoundcloudService},
-    ui,
+    ui::{self, cover_art::CoverArtRenderer},
 };
 use tokio::{sync::mpsc, task::LocalSet};
 
@@ -397,6 +397,28 @@ fn run_command(
                 });
             });
         }
+        AppCommand::LoadCoverArt { url } => {
+            tokio::spawn(async move {
+                let url_for_error = url.clone();
+                let result = async {
+                    let response = reqwest::get(&url).await?.error_for_status()?;
+                    let bytes = response.bytes().await?;
+                    Ok::<_, reqwest::Error>(AppEvent::CoverArtLoaded {
+                        url,
+                        bytes: bytes.to_vec(),
+                    })
+                }
+                .await;
+
+                let _ = sender.send(match result {
+                    Ok(event) => event,
+                    Err(error) => AppEvent::CoverArtFailed {
+                        url: url_for_error,
+                        error: error.to_string(),
+                    },
+                });
+            });
+        }
         AppCommand::PlayTrack { session, track } => {
             tokio::spawn(async move {
                 let title = track.title.clone();
@@ -454,6 +476,7 @@ where
 
 struct TerminalHandle {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    cover_art: CoverArtRenderer,
 }
 
 impl TerminalHandle {
@@ -465,13 +488,17 @@ impl TerminalHandle {
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
+        let cover_art = CoverArtRenderer::new();
 
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            cover_art,
+        })
     }
 
     fn draw(&mut self, app: &AppState) -> Result<()> {
         self.terminal
-            .draw(|frame| ui::layout::render_app(frame, app))?;
+            .draw(|frame| ui::layout::render_app(frame, app, &mut self.cover_art))?;
         Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use arboard::Clipboard;
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -33,6 +34,8 @@ pub struct AppState {
     pub focus: Focus,
     pub should_quit: bool,
     pub show_help: bool,
+    pub show_welcome: bool,
+    pub help_scroll: usize,
     pub auth: AuthState,
     pub session: Option<AuthorizedSession>,
     pub auth_summary: String,
@@ -42,6 +45,7 @@ pub struct AppState {
     pub loading: Option<LoadingState>,
     pub search_query: String,
     pub search_cursor: usize,
+    pub search_return_focus: Focus,
     pub library_items: Vec<LibraryItem>,
     pub playlists: Vec<SidebarPlaylist>,
     pub feed_rows: Vec<ContentRow>,
@@ -53,11 +57,14 @@ pub struct AppState {
     pub selected_library: usize,
     pub selected_playlist: usize,
     pub selected_content: usize,
+    pub layout: LayoutState,
     pub now_playing: NowPlaying,
+    pub cover_art: CoverArt,
     pub player: PlayerState,
     pub queue: QueueState,
     settings: Settings,
     help_requires_acknowledgement: bool,
+    content_return_focus: Focus,
     pending_commands: Vec<AppCommand>,
     recent_history: RecentlyPlayedStore,
     active_playlist_urn: Option<String>,
@@ -99,15 +106,47 @@ pub struct ContentRow {
     pub columns: [String; 4],
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutState {
+    pub sidebar_width_percent: u16,
+    pub library_height: u16,
+    pub playbar_height: u16,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            sidebar_width_percent: 20,
+            library_height: 7,
+            playbar_height: 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HelpRow {
+    pub description: &'static str,
+    pub event: &'static str,
+    pub context: &'static str,
+}
+
 #[derive(Debug, Clone)]
 pub struct NowPlaying {
     pub track: Option<TrackSummary>,
     pub title: String,
     pub artist: String,
     pub context: String,
+    pub artwork_url: Option<String>,
     pub elapsed_label: String,
     pub duration_label: String,
     pub progress_ratio: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CoverArt {
+    pub url: Option<String>,
+    pub bytes: Option<Vec<u8>>,
+    pub loading: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -201,6 +240,178 @@ struct SearchCache {
     playlists: CollectionState<SoundcloudPlaylist>,
     users: CollectionState<UserSummary>,
 }
+
+const HELP_ROWS: [HelpRow; 24] = [
+    HelpRow {
+        description: "Move focus to next pane",
+        event: "Tab",
+        context: "Navigation",
+    },
+    HelpRow {
+        description: "Move focus to previous pane",
+        event: "Shift+Tab",
+        context: "Navigation",
+    },
+    HelpRow {
+        description: "Move selection down",
+        event: "j | Down",
+        context: "Navigation",
+    },
+    HelpRow {
+        description: "Move selection up",
+        event: "k | Up",
+        context: "Navigation",
+    },
+    HelpRow {
+        description: "Enter active pane",
+        event: "Enter",
+        context: "Navigation",
+    },
+    HelpRow {
+        description: "Open help menu",
+        event: "? | F1",
+        context: "General",
+    },
+    HelpRow {
+        description: "Enter input for search",
+        event: "/",
+        context: "General",
+    },
+    HelpRow {
+        description: "Pause/Resume playback",
+        event: "Space",
+        context: "General",
+    },
+    HelpRow {
+        description: "Skip to next track",
+        event: "n",
+        context: "General",
+    },
+    HelpRow {
+        description: "Skip to previous track",
+        event: "p",
+        context: "General",
+    },
+    HelpRow {
+        description: "Seek backwards 5 seconds",
+        event: "<",
+        context: "General",
+    },
+    HelpRow {
+        description: "Seek forwards 5 seconds",
+        event: ">",
+        context: "General",
+    },
+    HelpRow {
+        description: "Increase volume by 10%",
+        event: "+",
+        context: "General",
+    },
+    HelpRow {
+        description: "Decrease volume by 10%",
+        event: "-",
+        context: "General",
+    },
+    HelpRow {
+        description: "Cycle repeat mode",
+        event: "Ctrl+r",
+        context: "General",
+    },
+    HelpRow {
+        description: "Toggle shuffle mode",
+        event: "Ctrl+s",
+        context: "General",
+    },
+    HelpRow {
+        description: "Copy URL to currently playing track",
+        event: "C",
+        context: "General",
+    },
+    HelpRow {
+        description: "Scroll down to next result page",
+        event: "Ctrl+d",
+        context: "Pagination",
+    },
+    HelpRow {
+        description: "Scroll up to previous result page",
+        event: "Ctrl+u",
+        context: "Pagination",
+    },
+    HelpRow {
+        description: "Decrease sidebar width",
+        event: "{",
+        context: "Layout",
+    },
+    HelpRow {
+        description: "Increase sidebar width",
+        event: "}",
+        context: "Layout",
+    },
+    HelpRow {
+        description: "Decrease playbar or library height",
+        event: "(",
+        context: "Layout",
+    },
+    HelpRow {
+        description: "Increase playbar or library height",
+        event: ")",
+        context: "Layout",
+    },
+    HelpRow {
+        description: "Reset layout to defaults",
+        event: "|",
+        context: "Layout",
+    },
+];
+
+const SEARCH_HELP_ROWS: [HelpRow; 8] = [
+    HelpRow {
+        description: "Search with input text",
+        event: "Enter",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Delete entire input",
+        event: "Ctrl+l",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Delete text from cursor to start of input",
+        event: "Ctrl+u",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Delete text from cursor to end of input",
+        event: "Ctrl+k",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Delete previous word",
+        event: "Ctrl+w",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Jump to start of input",
+        event: "Ctrl+i",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Jump to end of input",
+        event: "Ctrl+o",
+        context: "Search input",
+    },
+    HelpRow {
+        description: "Escape from input back to hovered block",
+        event: "Esc",
+        context: "Search input",
+    },
+];
+
+const CONTENT_HELP_ROWS: [HelpRow; 1] = [HelpRow {
+    description: "Escape back to previously navigated pane",
+    event: "Esc",
+    context: "Tracks/Album/User",
+}];
 
 impl<T> Default for CollectionState<T> {
     fn default() -> Self {
@@ -358,10 +569,12 @@ impl AppState {
             focus: Focus::Library,
             should_quit: false,
             show_help: false,
+            show_welcome: true,
+            help_scroll: 0,
             auth: AuthState::new(Credentials::default()),
             session: None,
             auth_summary: "Unauthenticated".to_string(),
-            status: "Tab cycles panes, arrows move, Enter selects, ? opens help, q quits."
+            status: "Tab cycles panes, / opens search, arrows move, Enter selects, ? opens help, q quits."
                 .to_string(),
             tick_count: 0,
             viewport: Viewport {
@@ -372,8 +585,9 @@ impl AppState {
                 message: "Preparing mock library data...".to_string(),
                 ticks_remaining: 2,
             }),
-            search_query: "deep house sketches".to_string(),
-            search_cursor: "deep house sketches".chars().count(),
+            search_query: String::new(),
+            search_cursor: 0,
+            search_return_focus: Focus::Library,
             library_items,
             playlists,
             feed_rows,
@@ -385,15 +599,18 @@ impl AppState {
             selected_library: 0,
             selected_playlist: 0,
             selected_content: 0,
+            layout: LayoutState::default(),
             now_playing: NowPlaying {
                 track: None,
-                title: "Phase 1 shell".to_string(),
-                artist: "No track selected".to_string(),
-                context: "Select a row in the content pane".to_string(),
+                title: "Nothing playing".to_string(),
+                artist: "Select a track and press Enter".to_string(),
+                context: "Idle".to_string(),
+                artwork_url: None,
                 elapsed_label: "0:00".to_string(),
                 duration_label: "0:00".to_string(),
                 progress_ratio: 0.0,
             },
+            cover_art: CoverArt::default(),
             player: PlayerState {
                 status: PlaybackStatus::Stopped,
                 volume_percent: 50.0,
@@ -405,6 +622,7 @@ impl AppState {
             queue: QueueState::default(),
             settings,
             help_requires_acknowledgement: false,
+            content_return_focus: Focus::Library,
             pending_commands: Vec::new(),
             recent_history,
             active_playlist_urn: None,
@@ -664,6 +882,23 @@ impl AppState {
                 self.search_tracks.fail(error.clone());
                 self.status = error;
             }
+            AppEvent::CoverArtLoaded { url, bytes } => {
+                if self.cover_art.url.as_deref() != Some(url.as_str()) {
+                    return;
+                }
+
+                self.cover_art.bytes = Some(bytes);
+                self.cover_art.loading = false;
+            }
+            AppEvent::CoverArtFailed { url, error } => {
+                if self.cover_art.url.as_deref() != Some(url.as_str()) {
+                    return;
+                }
+
+                self.cover_art.bytes = None;
+                self.cover_art.loading = false;
+                self.status = format!("Could not load cover art: {error}");
+            }
             AppEvent::PlaybackQueued {
                 session,
                 title,
@@ -857,14 +1092,14 @@ impl AppState {
                         .unwrap_or_else(|| "Waiting".to_string()),
                     empty_message: "No tracks are available for this playlist.".to_string(),
                     help_message: Some(
-                        "Enter plays from this playlist queue. Ctrl+R reloads the track list."
+                        "Enter plays from this playlist queue. Esc returns to the prior pane."
                             .to_string(),
                     ),
                 }
             }
             Route::Search => match self.search_view {
                 SearchView::Tracks => ContentView {
-                    title: format!("Search: {}", self.search_query),
+                    title: self.search_title(),
                     subtitle: self.search_subtitle(),
                     columns: ["Title", "Artist", "Access", "Length"],
                     rows: self
@@ -878,7 +1113,7 @@ impl AppState {
                     help_message: Some(self.search_help_message()),
                 },
                 SearchView::Playlists => ContentView {
-                    title: format!("Search: {}", self.search_query),
+                    title: self.search_title(),
                     subtitle: self.search_subtitle(),
                     columns: ["Playlist", "Creator", "Tracks", "Year"],
                     rows: self
@@ -892,7 +1127,7 @@ impl AppState {
                     help_message: Some(self.search_help_message()),
                 },
                 SearchView::Users => ContentView {
-                    title: format!("Search: {}", self.search_query),
+                    title: self.search_title(),
                     subtitle: self.search_subtitle(),
                     columns: ["Creator", "Followers", "Catalog", "Profile"],
                     rows: self.search_users.items.iter().map(user_row).collect(),
@@ -926,10 +1161,32 @@ impl AppState {
 
     pub fn header_help_label(&self) -> &'static str {
         if self.show_help {
-            "Enter/Esc close help | Ctrl+R reload | q quit"
+            "Esc closes help | Ctrl+d/u scroll | ? toggles"
         } else {
-            "? help | Ctrl+R reload | Tab panes | j/k move | Enter select | q quit"
+            "? help | / search | Tab panes | j/k move | Enter select | q quit"
         }
+    }
+
+    pub fn help_rows(&self) -> Vec<HelpRow> {
+        let mut rows =
+            Vec::with_capacity(HELP_ROWS.len() + SEARCH_HELP_ROWS.len() + CONTENT_HELP_ROWS.len());
+        rows.extend_from_slice(&HELP_ROWS);
+        rows.extend_from_slice(&SEARCH_HELP_ROWS);
+        rows.extend_from_slice(&CONTENT_HELP_ROWS);
+        rows
+    }
+
+    pub fn help_row_count(&self) -> usize {
+        HELP_ROWS.len() + SEARCH_HELP_ROWS.len() + CONTENT_HELP_ROWS.len()
+    }
+
+    pub fn set_focus(&mut self, focus: Focus) {
+        self.focus = focus;
+    }
+
+    pub fn focus_content_from(&mut self, focus: Focus) {
+        self.content_return_focus = focus;
+        self.focus = Focus::Content;
     }
 
     pub fn playlist_panel_title(&self) -> String {
@@ -950,7 +1207,9 @@ impl AppState {
         if self.playlists_loading && self.playlists.is_empty() {
             Some("Loading playlists...".to_string())
         } else if let Some(error) = &self.playlists_error {
-            Some(format!("Error loading playlists. Ctrl+R retries. {error}"))
+            Some(format!(
+                "Error loading playlists. Press F5 to retry. {error}"
+            ))
         } else if self.playlists_loaded && self.playlists.is_empty() {
             Some("No playlists are available for this account yet.".to_string())
         } else {
@@ -987,29 +1246,8 @@ impl AppState {
         )
     }
 
-    pub fn help_overlay_lines(&self) -> Vec<String> {
-        let mut lines = vec![
-            "Welcome to soundcloud-tui.".to_string(),
-            "Tab / Shift+Tab move across panes. j/k or arrows move within a pane. Enter selects."
-                .to_string(),
-            "Space toggles playback. n/p move through the queue. Left/Right seek. +/- set volume."
-                .to_string(),
-            "r cycles repeat mode. Ctrl+R or F5 reloads the current route. ? reopens this help."
-                .to_string(),
-            "Search results have three tables: 1 tracks, 2 playlists, 3 users.".to_string(),
-            "Recently Played is stored locally and survives restarts on this machine.".to_string(),
-        ];
-
-        if self.help_requires_acknowledgement {
-            lines.push(
-                "Close this overlay once to disable automatic first-run help on future launches."
-                    .to_string(),
-            );
-        } else {
-            lines.push("Press Enter, Esc, or ? to close this overlay.".to_string());
-        }
-
-        lines
+    pub fn help_visible_rows(&self) -> usize {
+        self.viewport.height.saturating_sub(7).max(8) as usize
     }
 
     pub fn sync_route_from_library(&mut self) {
@@ -1065,31 +1303,14 @@ impl AppState {
     pub fn select_current_content(&mut self) {
         match self.current_selected_content() {
             Some(SelectedContent::Track { track, context }) => {
-                if self.session.is_some() {
-                    if let Some((tracks, current_index)) = self.current_track_queue_selection() {
-                        self.queue.tracks = tracks;
-                        self.queue.current_index = Some(current_index);
-                    } else {
-                        self.queue.tracks = vec![track.clone()];
-                        self.queue.current_index = Some(0);
-                    }
-                    self.start_track_playback(track, context);
+                if let Some((tracks, current_index)) = self.current_track_queue_selection() {
+                    self.queue.tracks = tracks;
+                    self.queue.current_index = Some(current_index);
                 } else {
-                    self.now_playing = NowPlaying {
-                        track: Some(track.clone()),
-                        title: track.title.clone(),
-                        artist: track.artist.clone(),
-                        context,
-                        elapsed_label: "0:00".to_string(),
-                        duration_label: track.duration_label(),
-                        progress_ratio: 0.0,
-                    };
-                    self.status = format!(
-                        "Selected {} for playback preview ({}).",
-                        track.title,
-                        track.access_label()
-                    );
+                    self.queue.tracks = vec![track.clone()];
+                    self.queue.current_index = Some(0);
                 }
+                self.start_track_playback(track, context);
             }
             Some(SelectedContent::Playlist(playlist)) => {
                 self.open_playlist(playlist);
@@ -1109,16 +1330,10 @@ impl AppState {
                 };
 
                 if self.route.is_track_view() {
-                    self.now_playing = NowPlaying {
-                        track: None,
-                        title: row.columns[0].clone(),
-                        artist: row.columns[1].clone(),
-                        context: row.columns[2].clone(),
-                        elapsed_label: "0:00".to_string(),
-                        duration_label: row.columns[3].clone(),
-                        progress_ratio: 0.0,
-                    };
-                    self.status = format!("Selected {} for mock playback preview.", row.columns[0]);
+                    self.status = format!(
+                        "Playback is unavailable until SoundCloud authentication is complete for {}.",
+                        row.columns[0]
+                    );
                 } else {
                     self.status = format!("Inspected {}.", row.columns[0]);
                 }
@@ -1147,12 +1362,32 @@ impl AppState {
             title: track.title.clone(),
             artist: track.artist.clone(),
             context,
+            artwork_url: track.artwork_url.clone(),
             elapsed_label: "0:00".to_string(),
             duration_label: track.duration_label(),
             progress_ratio: 0.0,
         };
+        self.refresh_cover_art(track.artwork_url.as_deref());
         self.status = format!("Resolving SoundCloud stream for {}...", track.title);
         self.queue_command(AppCommand::PlayTrack { session, track });
+    }
+
+    fn refresh_cover_art(&mut self, artwork_url: Option<&str>) {
+        let Some(artwork_url) = artwork_url.map(str::trim).filter(|value| !value.is_empty()) else {
+            self.cover_art = CoverArt::default();
+            return;
+        };
+
+        if self.cover_art.url.as_deref() == Some(artwork_url) {
+            return;
+        }
+
+        self.cover_art.url = Some(artwork_url.to_string());
+        self.cover_art.bytes = None;
+        self.cover_art.loading = true;
+        self.queue_command(AppCommand::LoadCoverArt {
+            url: artwork_url.to_string(),
+        });
     }
 
     fn current_track_queue_selection(&self) -> Option<(Vec<TrackSummary>, usize)> {
@@ -1645,6 +1880,7 @@ impl AppState {
 
     pub fn on_resize(&mut self, width: u16, height: u16) {
         self.viewport = Viewport { width, height };
+        self.help_scroll = self.max_help_scroll().min(self.help_scroll);
         self.status = match self.mode {
             AppMode::Auth => format!("Resized onboarding view to {}x{}.", width, height),
             AppMode::Main => format!(
@@ -1670,6 +1906,95 @@ impl AppState {
             .unwrap_or("Ready")
     }
 
+    fn max_help_scroll(&self) -> usize {
+        self.help_row_count()
+            .saturating_sub(self.help_visible_rows())
+    }
+
+    fn scroll_help(&mut self, delta: isize) {
+        let next = self.help_scroll as isize + delta;
+        self.help_scroll = next.clamp(0, self.max_help_scroll() as isize) as usize;
+    }
+
+    fn page_help(&mut self, down: bool) {
+        let step = self.help_visible_rows().max(1) as isize;
+        self.scroll_help(if down { step } else { -step });
+    }
+
+    fn content_page_size(&self) -> usize {
+        self.viewport
+            .height
+            .saturating_sub(self.layout.playbar_height + 8)
+            .max(6) as usize
+    }
+
+    fn playlists_page_size(&self) -> usize {
+        self.viewport
+            .height
+            .saturating_sub(self.layout.playbar_height + self.layout.library_height + 8)
+            .max(4) as usize
+    }
+
+    fn page_results(&mut self, down: bool) -> bool {
+        match self.focus {
+            Focus::Content => self.page_content(down),
+            Focus::Playlists => self.page_playlists(down),
+            _ => false,
+        }
+    }
+
+    fn page_content(&mut self, down: bool) -> bool {
+        let len = self.current_content_len();
+        if len == 0 {
+            return down && self.maybe_queue_current_route_next_page();
+        }
+
+        let step = self.content_page_size();
+        let max_index = len.saturating_sub(1);
+        let next = if down {
+            self.selected_content.saturating_add(step).min(max_index)
+        } else {
+            self.selected_content.saturating_sub(step)
+        };
+        let moved = next != self.selected_content;
+        self.selected_content = next;
+
+        if moved {
+            if let Some(label) = self.current_selection_label() {
+                self.status = format!("Highlighted {}.", label);
+            }
+        }
+
+        let queued_more = down
+            && self.selected_content == max_index
+            && self.maybe_queue_current_route_next_page();
+        moved || queued_more
+    }
+
+    fn page_playlists(&mut self, down: bool) -> bool {
+        if self.playlists.is_empty() {
+            return down && self.maybe_queue_more_playlists();
+        }
+
+        let step = self.playlists_page_size();
+        let max_index = self.playlists.len().saturating_sub(1);
+        let next = if down {
+            self.selected_playlist.saturating_add(step).min(max_index)
+        } else {
+            self.selected_playlist.saturating_sub(step)
+        };
+        let moved = next != self.selected_playlist;
+        self.selected_playlist = next;
+
+        if moved {
+            self.sync_route_from_playlist();
+        }
+
+        let queued_more =
+            down && self.selected_playlist == max_index && self.maybe_queue_more_playlists();
+        moved || queued_more
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) {
         if is_global_quit_key(key) {
             self.should_quit = true;
@@ -1688,11 +2013,15 @@ impl AppState {
                     return;
                 }
 
-                if self.handle_main_shortcut_key(key) {
-                    return;
+                if self.show_welcome {
+                    self.show_welcome = false;
                 }
 
                 if self.focus == Focus::Search && self.handle_search_key(key) {
+                    return;
+                }
+
+                if self.handle_main_shortcut_key(key) {
                     return;
                 }
 
@@ -1712,31 +2041,78 @@ impl AppState {
     }
 
     fn handle_help_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
-                self.dismiss_help();
-            }
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _)
+            | (KeyCode::Enter, _)
+            | (KeyCode::Char('?'), _)
+            | (KeyCode::F(1), _) => self.dismiss_help(),
+            (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => self.scroll_help(1),
+            (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => self.scroll_help(-1),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.page_help(true),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.page_help(false),
             _ => {}
         }
     }
 
     fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char('?') => {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('/'), KeyModifiers::NONE) => {
+                self.begin_search_input();
+                true
+            }
+            (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => {
+                self.help_scroll = 0;
                 self.show_help = true;
-                self.status = "Showing help and first-run guidance.".to_string();
+                self.status = "Showing help menu.".to_string();
                 true
             }
-            KeyCode::F(5) => {
-                self.reload_current_route();
+            (KeyCode::Esc, _) if self.focus == Focus::Content => {
+                self.focus = self.content_return_focus;
+                self.status = format!("Returned focus to {}.", self.focus.label());
                 true
             }
-            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.reload_current_route();
-                true
-            }
-            KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.page_results(true),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.page_results(false),
+            (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.cycle_repeat_mode();
+                true
+            }
+            (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
+                self.apply_playback_intent(PlaybackIntent::SetShuffle(
+                    !self.player.shuffle_enabled,
+                ));
+                true
+            }
+            (KeyCode::Char('{'), _) => {
+                self.adjust_sidebar_width(-2);
+                true
+            }
+            (KeyCode::Char('}'), _) => {
+                self.adjust_sidebar_width(2);
+                true
+            }
+            (KeyCode::Char('('), _) => {
+                self.adjust_primary_panel_height(-1);
+                true
+            }
+            (KeyCode::Char(')'), _) => {
+                self.adjust_primary_panel_height(1);
+                true
+            }
+            (KeyCode::Char('|'), _) => {
+                self.reset_layout();
+                true
+            }
+            (KeyCode::Char(ch), modifiers)
+                if modifiers.intersection(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    == KeyModifiers::NONE
+                    && ch.eq_ignore_ascii_case(&'c') =>
+            {
+                self.copy_now_playing_url();
+                true
+            }
+            (KeyCode::F(5), _) => {
+                self.reload_current_route();
                 true
             }
             _ => false,
@@ -1771,94 +2147,119 @@ impl AppState {
                 self.status = "Pasted clipboard contents into the active field.".to_string();
             }
             AppMode::Main if self.focus == Focus::Search => {
+                self.show_welcome = false;
                 let sanitized = text.replace(['\r', '\n'], " ");
                 self.insert_search_text(sanitized.trim());
                 self.status = format!("Updated search query to '{}'.", self.search_query);
             }
-            AppMode::Main => {}
+            AppMode::Main => {
+                self.show_welcome = false;
+            }
         }
     }
 
     fn handle_search_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Enter => {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => {
+                self.focus = self.search_return_focus;
+                self.status = "Closed search input.".to_string();
+                true
+            }
+            (KeyCode::Enter, _) => {
                 self.submit_search();
                 true
             }
-            KeyCode::Left => {
+            (KeyCode::Left, _) => {
                 self.search_cursor = self.search_cursor.saturating_sub(1);
                 true
             }
-            KeyCode::Right => {
+            (KeyCode::Right, _) => {
                 self.search_cursor =
                     (self.search_cursor + 1).min(self.search_query.chars().count());
                 true
             }
-            KeyCode::Home => {
+            (KeyCode::Home, _) | (KeyCode::Char('i'), KeyModifiers::CONTROL) => {
                 self.search_cursor = 0;
                 true
             }
-            KeyCode::End => {
+            (KeyCode::End, _) | (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.search_cursor = self.search_query.chars().count();
                 true
             }
-            KeyCode::Backspace => {
+            (KeyCode::Backspace, _) => {
                 self.backspace_search();
                 true
             }
-            KeyCode::Delete => {
+            (KeyCode::Delete, _) => {
                 self.delete_search();
                 true
             }
-            KeyCode::Char(ch) if key.modifiers == KeyModifiers::NONE => {
-                self.insert_search_char(ch);
-                true
-            }
-            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+            (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 self.search_query.clear();
                 self.search_cursor = 0;
                 self.status = "Cleared the search query.".to_string();
+                true
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.delete_search_to_start();
+                true
+            }
+            (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
+                self.delete_search_to_end();
+                true
+            }
+            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                self.delete_previous_word();
+                true
+            }
+            (KeyCode::Char(ch), KeyModifiers::NONE) | (KeyCode::Char(ch), KeyModifiers::SHIFT) => {
+                self.insert_search_char(ch);
                 true
             }
             _ => false,
         }
     }
 
+    fn begin_search_input(&mut self) {
+        if self.focus != Focus::Search {
+            self.search_return_focus = self.focus;
+        }
+        self.set_focus(Focus::Search);
+        self.search_cursor = self.search_query.chars().count();
+        self.status = "Editing search query. Press Enter to search.".to_string();
+    }
+
     fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char(' ') => {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char(' '), _) => {
                 self.apply_playback_intent(PlaybackIntent::TogglePause);
                 true
             }
-            KeyCode::Char('s') => {
-                self.apply_playback_intent(PlaybackIntent::Stop);
-                true
-            }
-            KeyCode::Char('n') => {
+            (KeyCode::Char('n'), KeyModifiers::NONE) => {
                 self.apply_playback_intent(PlaybackIntent::Next);
                 true
             }
-            KeyCode::Char('p') => {
+            (KeyCode::Char('p'), KeyModifiers::NONE) => {
                 self.apply_playback_intent(PlaybackIntent::Previous);
                 true
             }
-            KeyCode::Left => {
+            (KeyCode::Char('<'), _) => {
                 self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: -5.0 });
                 true
             }
-            KeyCode::Right => {
+            (KeyCode::Char('>'), _) => {
                 self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: 5.0 });
                 true
             }
-            KeyCode::Char('-') => {
+            (KeyCode::Char('-'), _) => {
                 self.apply_playback_intent(PlaybackIntent::SetVolume {
-                    percent: self.player.volume_percent - 5.0,
+                    percent: self.player.volume_percent - 10.0,
                 });
                 true
             }
-            KeyCode::Char('=') | KeyCode::Char('+') => {
+            (KeyCode::Char('+'), _) | (KeyCode::Char('='), KeyModifiers::SHIFT) => {
                 self.apply_playback_intent(PlaybackIntent::SetVolume {
-                    percent: self.player.volume_percent + 5.0,
+                    percent: self.player.volume_percent + 10.0,
                 });
                 true
             }
@@ -1941,11 +2342,13 @@ impl AppState {
         self.session = Some(session.clone());
         self.set_auth_session(&session);
         self.reset_live_data();
+        self.show_welcome = !self.settings.show_help_on_startup;
         if self.settings.show_help_on_startup {
+            self.help_scroll = 0;
             self.show_help = true;
             self.help_requires_acknowledgement = true;
-            self.status = "Connected successfully. Review the help overlay for first-run guidance."
-                .to_string();
+            self.status =
+                "Connected successfully. Review the help menu for first-run guidance.".to_string();
         }
         self.request_playlists_load(false);
         self.request_route_load(false);
@@ -2137,9 +2540,14 @@ impl AppState {
             repeat_mode: RepeatMode::Off,
         };
         self.now_playing.track = None;
+        self.now_playing.title = "Nothing playing".to_string();
+        self.now_playing.artist = "Select a track and press Enter".to_string();
+        self.now_playing.context = "Idle".to_string();
+        self.now_playing.artwork_url = None;
         self.now_playing.progress_ratio = 0.0;
         self.now_playing.elapsed_label = "0:00".to_string();
         self.now_playing.duration_label = "0:00".to_string();
+        self.cover_art = CoverArt::default();
     }
 
     fn apply_playlists_page(&mut self, page: Page<SoundcloudPlaylist>, append: bool) {
@@ -2237,15 +2645,23 @@ impl AppState {
         )
     }
 
+    fn search_title(&self) -> String {
+        if self.search_query.is_empty() {
+            "Search".to_string()
+        } else {
+            format!("Search: {}", self.search_query)
+        }
+    }
+
     fn search_help_message(&self) -> String {
         let pagination = if self.search_view == SearchView::Tracks {
-            "Tracks paginate with j/k at the end of the table."
+            "Use Ctrl+d and Ctrl+u to jump across result pages."
         } else {
             "Playlist and creator results are first-page snapshots for now."
         };
 
         format!(
-            "Press 1/2/3 to switch search tables. {} Enter opens playlists or profiles.",
+            "Press / to refine the query and 1/2/3 to switch search tables. {} Enter opens playlists or profiles.",
             pagination
         )
     }
@@ -2277,6 +2693,53 @@ impl AppState {
             self.status = "Help dismissed. You can reopen it anytime with ?.".to_string();
         } else {
             self.status = "Help closed.".to_string();
+        }
+    }
+
+    fn adjust_sidebar_width(&mut self, delta: i16) {
+        let next = (self.layout.sidebar_width_percent as i16 + delta).clamp(14, 40) as u16;
+        self.layout.sidebar_width_percent = next;
+        self.status = format!("Sidebar width set to {}%.", next);
+    }
+
+    fn adjust_primary_panel_height(&mut self, delta: i16) {
+        match self.focus {
+            Focus::Library => {
+                let next = (self.layout.library_height as i16 + delta).clamp(4, 18) as u16;
+                self.layout.library_height = next;
+                self.status = format!("Library height set to {} rows.", next);
+            }
+            _ => {
+                let next = (self.layout.playbar_height as i16 + delta).clamp(4, 12) as u16;
+                self.layout.playbar_height = next;
+                self.status = format!("Playbar height set to {} rows.", next);
+            }
+        }
+    }
+
+    fn reset_layout(&mut self) {
+        self.layout = LayoutState::default();
+        self.status = "Layout reset to defaults.".to_string();
+    }
+
+    fn copy_now_playing_url(&mut self) {
+        let Some(track) = self.now_playing.track.as_ref() else {
+            self.status = "Nothing is playing to copy.".to_string();
+            return;
+        };
+
+        let Some(url) = track.permalink_url.as_deref() else {
+            self.status = format!("No SoundCloud URL is available for {}.", track.title);
+            return;
+        };
+
+        match Clipboard::new().and_then(|mut clipboard| clipboard.set_text(url.to_string())) {
+            Ok(()) => {
+                self.status = format!("Copied {} URL to the clipboard.", track.title);
+            }
+            Err(error) => {
+                self.status = format!("Could not copy the current track URL: {error}");
+            }
         }
     }
 
@@ -2438,6 +2901,7 @@ impl AppState {
 
         self.search_query = query;
         self.search_cursor = self.search_query.chars().count();
+        self.focus_content_from(self.search_return_focus);
         self.route = Route::Search;
         self.search_view = SearchView::Tracks;
         self.selected_content = 0;
@@ -2456,6 +2920,49 @@ impl AppState {
         for ch in text.chars() {
             self.insert_search_char(ch);
         }
+    }
+
+    fn delete_search_to_start(&mut self) {
+        if self.search_cursor == 0 {
+            return;
+        }
+
+        let chars = self.search_query.chars().collect::<Vec<_>>();
+        self.search_query = chars[self.search_cursor..].iter().copied().collect();
+        self.search_cursor = 0;
+        self.status = "Deleted text before the cursor.".to_string();
+    }
+
+    fn delete_search_to_end(&mut self) {
+        let chars = self.search_query.chars().collect::<Vec<_>>();
+        if self.search_cursor >= chars.len() {
+            return;
+        }
+
+        self.search_query = chars[..self.search_cursor].iter().copied().collect();
+        self.status = "Deleted text after the cursor.".to_string();
+    }
+
+    fn delete_previous_word(&mut self) {
+        if self.search_cursor == 0 {
+            return;
+        }
+
+        let chars = self.search_query.chars().collect::<Vec<_>>();
+        let mut word_start = self.search_cursor;
+
+        while word_start > 0 && chars[word_start - 1].is_whitespace() {
+            word_start -= 1;
+        }
+        while word_start > 0 && !chars[word_start - 1].is_whitespace() {
+            word_start -= 1;
+        }
+
+        let mut updated = chars[..word_start].to_vec();
+        updated.extend_from_slice(&chars[self.search_cursor..]);
+        self.search_query = updated.into_iter().collect();
+        self.search_cursor = word_start;
+        self.status = "Deleted the previous word.".to_string();
     }
 
     fn backspace_search(&mut self) {
@@ -2539,8 +3046,13 @@ impl AppState {
                 }
             }
             Route::Search => ContentView {
-                title: format!("Search: {}", self.search_query),
-                subtitle: "Mock search results until the real API layer lands.".to_string(),
+                title: self.search_title(),
+                subtitle: format!(
+                    "Showing {} for '{}'. Tracks: {} | Playlists: 0 | Users: 0",
+                    self.search_view.label(),
+                    self.search_query,
+                    self.search_rows.len(),
+                ),
                 columns: ["Title", "Artist", "Collection", "Length"],
                 rows: self.search_rows.clone(),
                 state_label: "Mock data".to_string(),

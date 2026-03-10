@@ -1,10 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use soundcloud_tui::{
-    app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Route},
+    app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Focus, Route},
     config::{
         credentials::Credentials, history::RecentlyPlayedStore, settings::Settings,
         tokens::TokenStore,
     },
+    player::command::PlayerCommand,
     player::event::PlayerEvent,
     soundcloud::{
         auth::{self, AuthSession, AuthorizedSession},
@@ -254,6 +255,266 @@ fn search_result_shortcuts_switch_between_tables() {
         KeyModifiers::NONE,
     )));
     assert_eq!(app.current_content().columns[0], "Title");
+}
+
+#[test]
+fn slash_enters_search_and_enter_submits_typed_query() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('/'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.focus, Focus::Search);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('n'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('i'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('h'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::NONE,
+    )));
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.focus, Focus::Content);
+    assert_eq!(app.route, Route::Search);
+    assert_eq!(app.search_query, "night");
+}
+
+#[test]
+fn enter_in_library_moves_focus_into_content() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.focus, Focus::Content);
+    assert_eq!(app.route, Route::Feed);
+}
+
+#[test]
+fn enter_in_playlists_moves_focus_into_content() {
+    let mut app = AppState::new();
+    app.focus = Focus::Playlists;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.focus, Focus::Content);
+    assert_eq!(app.route, Route::Playlist);
+}
+
+#[test]
+fn selecting_content_without_session_does_not_replace_now_playing() {
+    let mut app = AppState::new();
+    app.focus = Focus::Content;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.now_playing.track, None);
+    assert_eq!(app.now_playing.title, "Nothing playing");
+    assert!(
+        app.status
+            .contains("Playback is unavailable until SoundCloud authentication is complete")
+    );
+}
+
+#[test]
+fn ctrl_r_cycles_repeat_and_ctrl_s_toggles_shuffle() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('r'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.player.repeat_mode.label(), "Track");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('s'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.player.shuffle_enabled);
+}
+
+#[test]
+fn seek_and_volume_shortcuts_use_requested_keys() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:10", "Shortcut Track");
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('>'),
+        KeyModifiers::SHIFT,
+    )));
+    match app.take_pending_command() {
+        Some(AppCommand::ControlPlayback(PlayerCommand::SeekRelative { seconds })) => {
+            assert_eq!(seconds, 5.0)
+        }
+        other => panic!("expected forward seek command, got {other:?}"),
+    }
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('+'),
+        KeyModifiers::SHIFT,
+    )));
+    match app.take_pending_command() {
+        Some(AppCommand::ControlPlayback(PlayerCommand::SetVolume { percent })) => {
+            assert_eq!(percent, 60.0)
+        }
+        other => panic!("expected volume command, got {other:?}"),
+    }
+}
+
+#[test]
+fn search_input_shortcuts_edit_query() {
+    let mut app = AppState::new();
+    app.focus = Focus::Search;
+    app.search_query = "night drive".to_string();
+    app.search_cursor = app.search_query.len();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('i'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_cursor, 0);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_cursor, app.search_query.len());
+
+    app.search_cursor = 5;
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('k'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_query, "night");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char(' '),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('m'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('i'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::NONE,
+    )));
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_query, "night ");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('u'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_query, "");
+    assert_eq!(app.search_cursor, 0);
+
+    app.search_query = "reset me".to_string();
+    app.search_cursor = app.search_query.len();
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('l'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.search_query, "");
+}
+
+#[test]
+fn esc_in_content_returns_to_previous_pane() {
+    let mut app = AppState::new();
+    app.focus = Focus::Playlists;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.focus, Focus::Content);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.focus, Focus::Playlists);
+}
+
+#[test]
+fn help_menu_scrolls_with_ctrl_d_and_ctrl_u() {
+    let mut app = AppState::new();
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 16,
+    });
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('?'),
+        KeyModifiers::SHIFT,
+    )));
+    assert!(app.show_help);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('d'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.help_scroll > 0);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('u'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.help_scroll, 0);
+}
+
+#[test]
+fn f1_opens_and_closes_help_menu() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::F(1),
+        KeyModifiers::NONE,
+    )));
+    assert!(app.show_help);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::F(1),
+        KeyModifiers::NONE,
+    )));
+    assert!(!app.show_help);
 }
 
 #[test]

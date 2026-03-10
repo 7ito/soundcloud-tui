@@ -77,8 +77,13 @@ impl MprisIntegration {
         let projection = MprisProjection::from_app(app)?;
         let previous = self.last_projection.as_ref();
 
-        if previous.map(|value| value.metadata != projection.metadata).unwrap_or(true) {
-            self.player.set_metadata(projection.metadata.clone()).await?;
+        if previous
+            .map(|value| value.metadata != projection.metadata)
+            .unwrap_or(true)
+        {
+            self.player
+                .set_metadata(projection.metadata.clone())
+                .await?;
         }
 
         if previous
@@ -280,9 +285,8 @@ fn empty_metadata() -> Metadata {
 
 fn playback_status_for_app(app: &AppState) -> MprisPlaybackStatus {
     match app.player.status {
-        crate::app::state::PlaybackStatus::Playing | crate::app::state::PlaybackStatus::Buffering => {
-            MprisPlaybackStatus::Playing
-        }
+        crate::app::state::PlaybackStatus::Playing
+        | crate::app::state::PlaybackStatus::Buffering => MprisPlaybackStatus::Playing,
         crate::app::state::PlaybackStatus::Paused => MprisPlaybackStatus::Paused,
         crate::app::state::PlaybackStatus::Stopped => MprisPlaybackStatus::Stopped,
     }

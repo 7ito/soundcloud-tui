@@ -1,17 +1,25 @@
-use crate::app::{
-    action::Action,
-    route::{Focus, Route},
-    state::AppState,
-};
+use crate::app::{action::Action, route::Focus, state::AppState};
 
 pub fn reduce(state: &mut AppState, action: Action) {
     match action {
         Action::FocusNext => {
-            state.focus = state.focus.next();
+            let previous = state.focus;
+            let next = state.focus.next();
+            if next == Focus::Content {
+                state.focus_content_from(previous);
+            } else {
+                state.set_focus(next);
+            }
             state.status = format!("Focused {}.", state.focus.label());
         }
         Action::FocusPrevious => {
-            state.focus = state.focus.previous();
+            let previous = state.focus;
+            let next = state.focus.previous();
+            if next == Focus::Content {
+                state.focus_content_from(previous);
+            } else {
+                state.set_focus(next);
+            }
             state.status = format!("Focused {}.", state.focus.label());
         }
         Action::MoveUp => move_selection(state, true),
@@ -25,8 +33,7 @@ fn move_selection(state: &mut AppState, up: bool) {
     match state.focus {
         Focus::Search => {
             state.status = if up {
-                "Search cursor editing is available with Left/Right, Backspace, Delete, and Enter."
-                    .to_string()
+                "Search editing supports Left/Right, Ctrl+u/k/w/l, and Enter.".to_string()
             } else {
                 "Type a query, then press Enter to search SoundCloud.".to_string()
             };
@@ -75,17 +82,26 @@ fn move_selection(state: &mut AppState, up: bool) {
         }
         Focus::Playbar => {
             state.status =
-                "Use Space to toggle, Left/Right to seek, +/- for volume, n/p for queue."
-                    .to_string();
+                "Use Space to toggle, </> to seek, +/- for volume, n/p for queue.".to_string();
         }
     }
 }
 
 fn select(state: &mut AppState) {
     match state.focus {
-        Focus::Search => state.set_route(Route::Search),
-        Focus::Library => state.sync_route_from_library(),
-        Focus::Playlists => state.sync_route_from_playlist(),
+        Focus::Search => {
+            state.status = "Press Enter while editing to run the current search.".to_string();
+        }
+        Focus::Library => {
+            state.sync_route_from_library();
+            state.focus_content_from(Focus::Library);
+            state.status = format!("Focused content for {}.", state.route_title());
+        }
+        Focus::Playlists => {
+            state.sync_route_from_playlist();
+            state.focus_content_from(Focus::Playlists);
+            state.status = format!("Focused content for {}.", state.route_title());
+        }
         Focus::Content => state.select_current_content(),
         Focus::Playbar => {
             state.toggle_playback();
@@ -96,6 +112,7 @@ fn select(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Route;
 
     #[test]
     fn focus_cycles_forward_and_backward() {
@@ -131,13 +148,37 @@ mod tests {
     }
 
     #[test]
-    fn selecting_search_focus_opens_search_route() {
+    fn selecting_library_focus_moves_into_content() {
+        let mut state = AppState::new();
+
+        reduce(&mut state, Action::Select);
+
+        assert_eq!(state.focus, Focus::Content);
+        assert_eq!(state.route, Route::Feed);
+    }
+
+    #[test]
+    fn selecting_playlists_focus_moves_into_content() {
+        let mut state = AppState::new();
+        state.focus = Focus::Playlists;
+
+        reduce(&mut state, Action::Select);
+
+        assert_eq!(state.focus, Focus::Content);
+        assert_eq!(state.route, Route::Playlist);
+    }
+
+    #[test]
+    fn selecting_search_focus_keeps_current_route() {
         let mut state = AppState::new();
         state.focus = Focus::Search;
 
         reduce(&mut state, Action::Select);
 
-        assert_eq!(state.route, Route::Search);
-        assert_eq!(state.selected_content, 0);
+        assert_eq!(state.route, Route::Feed);
+        assert_eq!(
+            state.status,
+            "Press Enter while editing to run the current search."
+        );
     }
 }

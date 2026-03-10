@@ -14,14 +14,14 @@ impl Focus {
             Self::Library => Self::Playlists,
             Self::Playlists => Self::Content,
             Self::Content => Self::Playbar,
-            Self::Playbar => Self::Search,
+            Self::Playbar => Self::Library,
         }
     }
 
     pub fn previous(self) -> Self {
         match self {
             Self::Search => Self::Playbar,
-            Self::Library => Self::Search,
+            Self::Library => Self::Playbar,
             Self::Playlists => Self::Library,
             Self::Content => Self::Playlists,
             Self::Playbar => Self::Content,

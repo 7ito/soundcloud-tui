@@ -1,47 +1,41 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Alignment, Position, Rect},
     text::{Line, Span},
     widgets::Paragraph,
 };
 
 use crate::{
     app::{AppState, Focus},
-    ui::widgets::{header_style, pane_block},
+    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block},
 };
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(82), Constraint::Percentage(18)])
-        .split(area);
-
+pub fn render_search(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
+    let block = pane_block("Search", app.focus == Focus::Search);
+    let inner = block.inner(area);
     let search = Paragraph::new(Line::from(vec![
-        Span::styled("> ", header_style()),
+        Span::styled(HIGHLIGHT_SYMBOL, header_style()),
         Span::raw(app.search_query.as_str()),
-        Span::raw("  (Enter searches SoundCloud | 1/2/3 switch search tables)"),
     ]))
-    .block(pane_block("Search", app.focus == Focus::Search));
+    .block(block);
 
-    let help = Paragraph::new(vec![
-        Line::from(format!("Focus: {}", app.focus.label())),
-        Line::from(app.header_help_label()),
-    ])
-    .block(pane_block("Help", false));
-
-    frame.render_widget(search, chunks[0]);
-    frame.render_widget(help, chunks[1]);
+    frame.render_widget(search, area);
 
     if app.focus == Focus::Search {
-        let cursor_x = chunks[0]
+        let cursor_x = area
             .x
-            .saturating_add(3)
+            .saturating_add(inner.x.saturating_sub(area.x))
+            .saturating_add(HIGHLIGHT_SYMBOL.chars().count() as u16)
             .saturating_add(app.search_cursor as u16)
-            .min(
-                chunks[0]
-                    .x
-                    .saturating_add(chunks[0].width.saturating_sub(2)),
-            );
-        frame.set_cursor_position(Position::new(cursor_x, chunks[0].y.saturating_add(1)));
+            .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
+        frame.set_cursor_position(Position::new(cursor_x, inner.y));
     }
+}
+
+pub fn render_help(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
+    let help = Paragraph::new("?")
+        .alignment(Alignment::Left)
+        .block(pane_block("Help", app.show_help));
+
+    frame.render_widget(help, area);
 }

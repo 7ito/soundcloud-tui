@@ -63,6 +63,9 @@ pub enum AppCommand {
         query: String,
         next_href: String,
     },
+    LoadCoverArt {
+        url: String,
+    },
     PlayTrack {
         session: AuthorizedSession,
         track: TrackSummary,
