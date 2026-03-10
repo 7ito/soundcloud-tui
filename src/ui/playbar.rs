@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{LineGauge, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, LineGauge, Padding, Paragraph, Wrap},
 };
 
 use crate::{
@@ -80,6 +80,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
     frame.render_widget(artist, rows[1]);
     frame.render_widget(controls, rows[2]);
     frame.render_widget(progress, rows[3]);
+
+    render_toast(frame, meta_area, app);
 }
 
 fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -115,6 +117,43 @@ fn render_cover_art(
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
     frame.render_widget(widget, area);
+}
+
+fn render_toast(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
+    let Some(toast) = app.toast.as_ref() else {
+        return;
+    };
+
+    if area.width < 24 || area.height < 3 {
+        return;
+    }
+
+    let width = toast
+        .message
+        .chars()
+        .count()
+        .saturating_add(4)
+        .clamp(18, 34) as u16;
+    let width = width.min(area.width);
+    let toast_area = Rect {
+        x: area.x.saturating_add(area.width.saturating_sub(width)),
+        y: area.y,
+        width,
+        height: 3.min(area.height),
+    };
+    let theme = Theme::default();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::horizontal(1))
+        .border_style(Style::default().fg(theme.accent_secondary));
+    let paragraph = Paragraph::new(toast.message.as_str())
+        .style(Style::default().fg(theme.accent_secondary))
+        .alignment(Alignment::Center)
+        .block(block);
+
+    frame.render_widget(Clear, toast_area);
+    frame.render_widget(paragraph, toast_area);
 }
 
 fn playbar_title(app: &AppState) -> String {

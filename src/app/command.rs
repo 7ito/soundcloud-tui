@@ -63,6 +63,10 @@ pub enum AppCommand {
         query: String,
         next_href: String,
     },
+    CopyText {
+        text: String,
+        label: String,
+    },
     LoadCoverArt {
         url: String,
     },

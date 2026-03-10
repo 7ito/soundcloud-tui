@@ -518,6 +518,79 @@ fn f1_opens_and_closes_help_menu() {
 }
 
 #[test]
+fn copy_shortcut_queues_clipboard_command() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:11", "Share Me");
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title.clone();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::SHIFT,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::CopyText { text, label }) => {
+            assert_eq!(text, "https://soundcloud.com/tester/Share Me");
+            assert_eq!(label, track.title);
+        }
+        other => panic!("expected CopyText command, got {other:?}"),
+    }
+}
+
+#[test]
+fn clipboard_copy_failure_opens_dismissible_error_modal() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::ClipboardCopyFailed {
+        label: "Share Me".to_string(),
+        error: "clipboard unavailable".to_string(),
+    });
+
+    let error_modal = app.error_modal.as_ref().expect("expected error modal");
+    assert_eq!(error_modal.title, "Could not copy share URL");
+    assert!(error_modal.message.contains("clipboard unavailable"));
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+
+    assert!(app.error_modal.is_none());
+}
+
+#[test]
+fn route_load_failures_open_error_modal() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::FeedFailed("network timeout".to_string()));
+
+    let error_modal = app.error_modal.as_ref().expect("expected error modal");
+    assert_eq!(error_modal.title, "Could not load feed");
+    assert_eq!(app.status, "Could not load feed");
+}
+
+#[test]
+fn clipboard_success_shows_temporary_toast() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::ClipboardCopied {
+        label: "Share Me".to_string(),
+    });
+
+    let toast = app.toast.as_ref().expect("expected toast");
+    assert_eq!(toast.message, "Copied URL to clipboard");
+
+    for _ in 0..11 {
+        app.dispatch_event(AppEvent::Tick);
+    }
+    assert!(app.toast.is_some());
+
+    app.dispatch_event(AppEvent::Tick);
+    assert!(app.toast.is_none());
+}
+
+#[test]
 fn selecting_album_opens_playlist_detail_route() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:2", "Weekend Album");

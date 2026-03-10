@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use arboard::Clipboard;
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -35,6 +34,8 @@ pub struct AppState {
     pub should_quit: bool,
     pub show_help: bool,
     pub show_welcome: bool,
+    pub error_modal: Option<ErrorModal>,
+    pub toast: Option<Toast>,
     pub help_scroll: usize,
     pub auth: AuthState,
     pub session: Option<AuthorizedSession>,
@@ -128,6 +129,18 @@ pub struct HelpRow {
     pub description: &'static str,
     pub event: &'static str,
     pub context: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorModal {
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub expires_at_tick: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -456,8 +469,8 @@ impl<T> CollectionState<T> {
     fn state_label(&self) -> String {
         if self.loading {
             "Loading".to_string()
-        } else if let Some(error) = &self.error {
-            format!("Error: {error}")
+        } else if self.error.is_some() {
+            "Error".to_string()
         } else if self.loaded {
             if self.items.is_empty() {
                 "Empty".to_string()
@@ -570,6 +583,8 @@ impl AppState {
             should_quit: false,
             show_help: false,
             show_welcome: true,
+            error_modal: None,
+            toast: None,
             help_scroll: 0,
             auth: AuthState::new(Credentials::default()),
             session: None,
@@ -749,7 +764,7 @@ impl AppState {
             }
             AppEvent::FeedFailed(error) => {
                 self.feed.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load feed", error);
             }
             AppEvent::LikedSongsLoaded {
                 session,
@@ -762,7 +777,7 @@ impl AppState {
             }
             AppEvent::LikedSongsFailed(error) => {
                 self.liked_tracks.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load liked songs", error);
             }
             AppEvent::AlbumsLoaded {
                 session,
@@ -778,7 +793,7 @@ impl AppState {
             }
             AppEvent::AlbumsFailed(error) => {
                 self.albums.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load albums", error);
             }
             AppEvent::FollowingLoaded {
                 session,
@@ -791,7 +806,7 @@ impl AppState {
             }
             AppEvent::FollowingFailed(error) => {
                 self.following.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load followed creators", error);
             }
             AppEvent::PlaylistsLoaded {
                 session,
@@ -805,7 +820,7 @@ impl AppState {
                 self.playlists_loading = false;
                 self.playlists_loaded = true;
                 self.playlists_error = Some(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load playlists", error);
             }
             AppEvent::PlaylistTracksLoaded {
                 session,
@@ -826,7 +841,7 @@ impl AppState {
                     .entry(playlist_urn)
                     .or_default()
                     .fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load playlist tracks", error);
             }
             AppEvent::SearchLoaded {
                 session,
@@ -855,7 +870,7 @@ impl AppState {
                 self.search_tracks.fail(error.clone());
                 self.search_playlists.fail(error.clone());
                 self.search_users.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load search results", error);
             }
             AppEvent::SearchTracksPageLoaded {
                 session,
@@ -880,7 +895,17 @@ impl AppState {
                 }
 
                 self.search_tracks.fail(error.clone());
-                self.status = error;
+                self.show_main_error("Could not load more search results", error);
+            }
+            AppEvent::ClipboardCopied { label } => {
+                self.status = format!("Copied {} URL to the clipboard.", label);
+                self.show_toast("Copied URL to clipboard");
+            }
+            AppEvent::ClipboardCopyFailed { label, error } => {
+                self.show_main_error(
+                    "Could not copy share URL",
+                    format!("Could not copy the SoundCloud URL for {label}.\n\n{error}"),
+                );
             }
             AppEvent::CoverArtLoaded { url, bytes } => {
                 if self.cover_art.url.as_deref() != Some(url.as_str()) {
@@ -914,7 +939,10 @@ impl AppState {
             }
             AppEvent::PlaybackFailed { title, error } => {
                 self.player.status = PlaybackStatus::Stopped;
-                self.status = format!("Could not start playback for {title}: {error}");
+                self.show_main_error(
+                    "Could not start playback",
+                    format!("Could not start playback for {title}.\n\n{error}"),
+                );
             }
             AppEvent::PlaybackIntent(intent) => self.apply_playback_intent(intent),
             AppEvent::Player(event) => self.apply_player_event(event),
@@ -1192,8 +1220,8 @@ impl AppState {
     pub fn playlist_panel_title(&self) -> String {
         if self.playlists_loading {
             "Playlists (loading...)".to_string()
-        } else if let Some(error) = &self.playlists_error {
-            format!("Playlists (error: {error})")
+        } else if self.playlists_error.is_some() {
+            "Playlists (error)".to_string()
         } else if self.playlists_loaded && self.playlists.is_empty() {
             "Playlists (empty)".to_string()
         } else if self.playlists_next_href.is_some() {
@@ -1206,10 +1234,8 @@ impl AppState {
     pub fn playlist_panel_placeholder(&self) -> Option<String> {
         if self.playlists_loading && self.playlists.is_empty() {
             Some("Loading playlists...".to_string())
-        } else if let Some(error) = &self.playlists_error {
-            Some(format!(
-                "Error loading playlists. Press F5 to retry. {error}"
-            ))
+        } else if self.playlists_error.is_some() {
+            Some("Could not load playlists. Press F5 to retry.".to_string())
         } else if self.playlists_loaded && self.playlists.is_empty() {
             Some("No playlists are available for this account yet.".to_string())
         } else {
@@ -1706,7 +1732,7 @@ impl AppState {
             }
             PlayerEvent::BackendError(error) => {
                 self.player.status = PlaybackStatus::Stopped;
-                self.status = format!("Playback backend error: {error}");
+                self.show_main_error("Playback backend error", error);
             }
         }
     }
@@ -1870,6 +1896,14 @@ impl AppState {
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
 
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|toast| self.tick_count >= toast.expires_at_tick)
+        {
+            self.toast = None;
+        }
+
         if let Some(loading) = &mut self.loading {
             loading.ticks_remaining = loading.ticks_remaining.saturating_sub(1);
             if loading.ticks_remaining == 0 {
@@ -1904,6 +1938,38 @@ impl AppState {
             .as_ref()
             .map(|loading| loading.message.as_str())
             .unwrap_or("Ready")
+    }
+
+    fn show_error_modal(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.error_modal = Some(ErrorModal {
+            title: title.into(),
+            message: message.into(),
+        });
+    }
+
+    fn show_main_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        let title = title.into();
+        self.show_error_modal(title.clone(), message);
+        self.status = title;
+    }
+
+    fn show_toast(&mut self, message: impl Into<String>) {
+        self.toast = Some(Toast {
+            message: message.into(),
+            expires_at_tick: self.tick_count.saturating_add(12),
+        });
+    }
+
+    fn dismiss_error_modal(&mut self) {
+        self.error_modal = None;
+        self.status = "Dismissed the latest error.".to_string();
+    }
+
+    fn handle_error_modal_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => self.dismiss_error_modal(),
+            _ => {}
+        }
     }
 
     fn max_help_scroll(&self) -> usize {
@@ -2010,6 +2076,11 @@ impl AppState {
             AppMode::Main => {
                 if self.show_help {
                     self.handle_help_key(key);
+                    return;
+                }
+
+                if self.error_modal.is_some() {
+                    self.handle_error_modal_key(key);
                     return;
                 }
 
@@ -2724,23 +2795,29 @@ impl AppState {
 
     fn copy_now_playing_url(&mut self) {
         let Some(track) = self.now_playing.track.as_ref() else {
-            self.status = "Nothing is playing to copy.".to_string();
+            self.show_main_error(
+                "Could not copy share URL",
+                "Nothing is playing right now, so there is no SoundCloud URL to copy.",
+            );
             return;
         };
 
         let Some(url) = track.permalink_url.as_deref() else {
-            self.status = format!("No SoundCloud URL is available for {}.", track.title);
+            self.show_main_error(
+                "Could not copy share URL",
+                format!("No SoundCloud URL is available for {}.", track.title),
+            );
             return;
         };
 
-        match Clipboard::new().and_then(|mut clipboard| clipboard.set_text(url.to_string())) {
-            Ok(()) => {
-                self.status = format!("Copied {} URL to the clipboard.", track.title);
-            }
-            Err(error) => {
-                self.status = format!("Could not copy the current track URL: {error}");
-            }
-        }
+        let label = track.title.clone();
+        let text = url.to_string();
+
+        self.queue_command(AppCommand::CopyText {
+            text,
+            label: label.clone(),
+        });
+        self.status = format!("Copying {} URL to the clipboard...", label);
     }
 
     fn cycle_repeat_mode(&mut self) {

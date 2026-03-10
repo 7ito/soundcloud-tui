@@ -64,6 +64,10 @@ pub fn render_app(frame: &mut Frame<'_>, app: &AppState, cover_art: &mut CoverAr
         super::welcome::render(frame, middle[1], app);
     }
 
+    if app.error_modal.is_some() {
+        super::error_modal::render(frame, frame.area(), app);
+    }
+
     if app.show_help {
         super::help::render(frame, frame.area(), app);
     }

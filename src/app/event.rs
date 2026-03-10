@@ -83,6 +83,13 @@ pub enum AppEvent {
         query: String,
         error: String,
     },
+    ClipboardCopied {
+        label: String,
+    },
+    ClipboardCopyFailed {
+        label: String,
+        error: String,
+    },
     CoverArtLoaded {
         url: String,
         bytes: Vec<u8>,
