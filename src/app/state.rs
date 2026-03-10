@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
-    app::{Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, Route, reducer},
+    app::{
+        reducer, Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus,
+        PlaybackIntent, RepeatMode, Route,
+    },
     config::{credentials::Credentials, tokens::TokenStore},
     input::events::{is_global_quit_key, map_main_key_event},
     player::{command::PlayerCommand, event::PlayerEvent},
@@ -118,6 +121,8 @@ pub struct PlayerState {
     pub volume_percent: f64,
     pub position_seconds: f64,
     pub duration_seconds: Option<f64>,
+    pub shuffle_enabled: bool,
+    pub repeat_mode: RepeatMode,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -338,6 +343,8 @@ impl AppState {
                 volume_percent: 50.0,
                 position_seconds: 0.0,
                 duration_seconds: None,
+                shuffle_enabled: false,
+                repeat_mode: RepeatMode::Off,
             },
             queue: QueueState::default(),
             pending_commands: Vec::new(),
@@ -589,6 +596,7 @@ impl AppState {
                 self.player.status = PlaybackStatus::Stopped;
                 self.status = format!("Could not start playback for {title}: {error}");
             }
+            AppEvent::PlaybackIntent(intent) => self.apply_playback_intent(intent),
             AppEvent::Player(event) => self.apply_player_event(event),
         }
     }
@@ -951,13 +959,80 @@ impl AppState {
     }
 
     pub fn toggle_playback(&mut self) {
-        if self.now_playing.track.is_none() {
+        self.apply_playback_intent(PlaybackIntent::TogglePause);
+    }
+
+    pub fn apply_playback_intent(&mut self, intent: PlaybackIntent) {
+        match intent {
+            PlaybackIntent::Play => self.play_playback(),
+            PlaybackIntent::Pause => self.pause_playback(),
+            PlaybackIntent::TogglePause => {
+                if self.player.status == PlaybackStatus::Stopped {
+                    self.play_playback();
+                } else if self.now_playing.track.is_none() {
+                    self.status = "Select a track first.".to_string();
+                } else {
+                    self.queue_command(AppCommand::ControlPlayback(PlayerCommand::TogglePause));
+                    self.status = "Toggling playback...".to_string();
+                }
+            }
+            PlaybackIntent::Stop => self.stop_playback(),
+            PlaybackIntent::Next => self.play_next_track(),
+            PlaybackIntent::Previous => self.play_previous_track(),
+            PlaybackIntent::SeekRelative { seconds } => self.seek_relative(seconds),
+            PlaybackIntent::SeekAbsolute { seconds } => self.seek_absolute(seconds),
+            PlaybackIntent::SetVolume { percent } => self.set_volume(percent),
+            PlaybackIntent::SetShuffle(enabled) => self.set_shuffle(enabled),
+            PlaybackIntent::SetRepeat(mode) => self.set_repeat_mode(mode),
+        }
+    }
+
+    fn play_playback(&mut self) {
+        let Some(track) = self.now_playing.track.clone() else {
             self.status = "Select a track first.".to_string();
+            return;
+        };
+
+        match self.player.status {
+            PlaybackStatus::Playing => {
+                self.status = format!("{} is already playing.", track.title);
+            }
+            PlaybackStatus::Buffering => {
+                self.status = format!("{} is still buffering.", track.title);
+            }
+            PlaybackStatus::Paused => {
+                self.queue_command(AppCommand::ControlPlayback(PlayerCommand::Play));
+                self.status = format!("Resuming {}...", track.title);
+            }
+            PlaybackStatus::Stopped => {
+                self.start_track_playback(track, self.now_playing.context.clone());
+            }
+        }
+    }
+
+    fn pause_playback(&mut self) {
+        let Some(title) = self
+            .now_playing
+            .track
+            .as_ref()
+            .map(|track| track.title.clone())
+        else {
+            self.status = "Nothing is playing.".to_string();
+            return;
+        };
+
+        if self.player.status == PlaybackStatus::Paused {
+            self.status = format!("{title} is already paused.");
             return;
         }
 
-        self.queue_command(AppCommand::ControlPlayback(PlayerCommand::TogglePause));
-        self.status = "Toggling playback...".to_string();
+        if self.player.status == PlaybackStatus::Stopped {
+            self.status = "Nothing is playing.".to_string();
+            return;
+        }
+
+        self.queue_command(AppCommand::ControlPlayback(PlayerCommand::Pause));
+        self.status = format!("Pausing {title}...");
     }
 
     fn stop_playback(&mut self) {
@@ -986,21 +1061,47 @@ impl AppState {
         };
     }
 
-    fn adjust_volume(&mut self, delta: f64) {
-        let target = (self.player.volume_percent + delta).clamp(0.0, 100.0);
+    fn seek_absolute(&mut self, seconds: f64) {
+        if self.now_playing.track.is_none() {
+            self.status = "Nothing is playing.".to_string();
+            return;
+        }
+
+        let seconds = seconds.max(0.0);
+        self.queue_command(AppCommand::ControlPlayback(PlayerCommand::SeekAbsolute {
+            seconds,
+        }));
+        self.status = format!("Seeking to {}...", format_seconds_f64(seconds));
+    }
+
+    fn set_volume(&mut self, percent: f64) {
+        let target = percent.clamp(0.0, 100.0);
         self.queue_command(AppCommand::ControlPlayback(PlayerCommand::SetVolume {
             percent: target,
         }));
         self.status = format!("Setting volume to {:.0}%...", target.round());
     }
 
+    fn set_shuffle(&mut self, enabled: bool) {
+        self.player.shuffle_enabled = enabled;
+        self.status = if enabled {
+            "Shuffle enabled.".to_string()
+        } else {
+            "Shuffle disabled.".to_string()
+        };
+    }
+
+    fn set_repeat_mode(&mut self, repeat_mode: RepeatMode) {
+        self.player.repeat_mode = repeat_mode;
+        self.status = format!("Repeat mode set to {}.", repeat_mode.label());
+    }
+
     fn play_next_track(&mut self) {
-        let Some(current_index) = self.queue.current_index else {
-            self.status = "Nothing queued for playback.".to_string();
+        let Some(next_index) = self.next_queue_index() else {
+            self.status = "Reached the end of the queue.".to_string();
             return;
         };
 
-        let next_index = current_index.saturating_add(1);
         let Some(track) = self.queue.tracks.get(next_index).cloned() else {
             self.status = "Reached the end of the queue.".to_string();
             return;
@@ -1008,6 +1109,35 @@ impl AppState {
 
         self.queue.current_index = Some(next_index);
         self.start_track_playback(track, self.now_playing.context.clone());
+    }
+
+    fn next_queue_index(&self) -> Option<usize> {
+        let current_index = self.queue.current_index?;
+        let track_count = self.queue.tracks.len();
+
+        if current_index + 1 < track_count {
+            Some(current_index + 1)
+        } else if self.player.repeat_mode == RepeatMode::Queue && track_count > 0 {
+            Some(0)
+        } else {
+            None
+        }
+    }
+
+    fn restart_current_track(&mut self) -> bool {
+        let track = self
+            .queue
+            .current_index
+            .and_then(|index| self.queue.tracks.get(index).cloned())
+            .or_else(|| self.now_playing.track.clone());
+
+        let Some(track) = track else {
+            self.status = "Nothing queued for playback.".to_string();
+            return false;
+        };
+
+        self.start_track_playback(track, self.now_playing.context.clone());
+        true
     }
 
     fn play_previous_track(&mut self) {
@@ -1024,7 +1154,15 @@ impl AppState {
             return;
         }
 
-        let previous_index = current_index.saturating_sub(1);
+        let previous_index = if current_index > 0 {
+            current_index - 1
+        } else if self.player.repeat_mode == RepeatMode::Queue && !self.queue.tracks.is_empty() {
+            self.queue.tracks.len().saturating_sub(1)
+        } else {
+            self.status = "Already at the start of the queue.".to_string();
+            return;
+        };
+
         let Some(track) = self.queue.tracks.get(previous_index).cloned() else {
             self.status = "Already at the start of the queue.".to_string();
             return;
@@ -1060,12 +1198,14 @@ impl AppState {
                 self.player.position_seconds = 0.0;
                 self.now_playing.elapsed_label = "0:00".to_string();
                 self.now_playing.progress_ratio = 0.0;
-                if let Some(current_index) = self.queue.current_index {
-                    if current_index + 1 < self.queue.tracks.len() {
-                        self.play_next_track();
-                    } else {
+                if self.player.repeat_mode == RepeatMode::Track {
+                    if !self.restart_current_track() {
                         self.status = "Reached the end of the queue.".to_string();
                     }
+                } else if self.next_queue_index().is_some() {
+                    self.play_next_track();
+                } else {
+                    self.status = "Reached the end of the queue.".to_string();
                 }
             }
             PlayerEvent::PositionChanged { seconds } => {
@@ -1372,35 +1512,39 @@ impl AppState {
     fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char(' ') => {
-                self.toggle_playback();
+                self.apply_playback_intent(PlaybackIntent::TogglePause);
                 true
             }
             KeyCode::Char('s') => {
-                self.stop_playback();
+                self.apply_playback_intent(PlaybackIntent::Stop);
                 true
             }
             KeyCode::Char('n') => {
-                self.play_next_track();
+                self.apply_playback_intent(PlaybackIntent::Next);
                 true
             }
             KeyCode::Char('p') => {
-                self.play_previous_track();
+                self.apply_playback_intent(PlaybackIntent::Previous);
                 true
             }
             KeyCode::Left => {
-                self.seek_relative(-5.0);
+                self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: -5.0 });
                 true
             }
             KeyCode::Right => {
-                self.seek_relative(5.0);
+                self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: 5.0 });
                 true
             }
             KeyCode::Char('-') => {
-                self.adjust_volume(-5.0);
+                self.apply_playback_intent(PlaybackIntent::SetVolume {
+                    percent: self.player.volume_percent - 5.0,
+                });
                 true
             }
             KeyCode::Char('=') | KeyCode::Char('+') => {
-                self.adjust_volume(5.0);
+                self.apply_playback_intent(PlaybackIntent::SetVolume {
+                    percent: self.player.volume_percent + 5.0,
+                });
                 true
             }
             _ => false,
@@ -1649,6 +1793,8 @@ impl AppState {
             volume_percent: 50.0,
             position_seconds: 0.0,
             duration_seconds: None,
+            shuffle_enabled: false,
+            repeat_mode: RepeatMode::Off,
         };
         self.now_playing.track = None;
         self.now_playing.progress_ratio = 0.0;

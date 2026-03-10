@@ -16,11 +16,15 @@ use soundcloud_tui::{
     soundcloud::{auth, auth::AuthorizedSession, service::SoundcloudService},
     ui,
 };
-use tokio::sync::mpsc;
+#[cfg(all(feature = "mpris", target_os = "linux"))]
+use soundcloud_tui::integrations::mpris::MprisIntegration;
+use tokio::{sync::mpsc, task::LocalSet};
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = run().await {
+    let local = LocalSet::new();
+
+    if let Err(error) = local.run_until(run()).await {
         eprintln!("soundcloud-tui failed: {error:?}");
     }
 }
@@ -57,6 +61,22 @@ async fn run() -> Result<()> {
     let (async_tx, mut async_rx) = mpsc::unbounded_channel::<AppEvent>();
     let player = PlayerHandle::spawn(paths.clone(), async_tx.clone());
 
+    #[cfg(all(feature = "mpris", target_os = "linux"))]
+    let mut mpris = match MprisIntegration::new(async_tx.clone()).await {
+        Ok(mut integration) => {
+            if let Err(error) = integration.sync_from_app(&app).await {
+                warn!("disabling MPRIS integration after initial sync failure: {error}");
+                None
+            } else {
+                Some(integration)
+            }
+        }
+        Err(error) => {
+            warn!("MPRIS integration unavailable: {error}");
+            None
+        }
+    };
+
     loop {
         drain_commands(&mut app, &paths, &async_tx, &player);
         terminal.draw(&app)?;
@@ -69,6 +89,14 @@ async fn run() -> Result<()> {
             maybe_async = async_rx.recv() => {
                 let Some(event) = maybe_async else { break; };
                 app.dispatch_event(event);
+            }
+        }
+
+        #[cfg(all(feature = "mpris", target_os = "linux"))]
+        if let Some(integration) = mpris.as_mut() {
+            if let Err(error) = integration.sync_from_app(&app).await {
+                warn!("disabling MPRIS integration after sync failure: {error}");
+                mpris = None;
             }
         }
 

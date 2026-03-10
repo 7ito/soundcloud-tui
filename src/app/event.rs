@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::{
+    app::PlaybackIntent,
     player::event::PlayerEvent,
     soundcloud::{
         auth::{AuthorizationRequest, AuthorizedSession},
@@ -91,5 +92,6 @@ pub enum AppEvent {
         title: String,
         error: String,
     },
+    PlaybackIntent(PlaybackIntent),
     Player(PlayerEvent),
 }
