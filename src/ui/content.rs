@@ -19,10 +19,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(1)])
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
         .split(inner);
 
-    let summary = Paragraph::new(vec![
+    let mut summary_lines = vec![
         Line::from(view.subtitle.clone()),
         Line::from(format!("State: {}", view.state_label)),
         Line::from(app.auth_summary.as_str()),
@@ -33,17 +33,26 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             app.viewport.width,
             app.viewport.height
         )),
-    ])
-    .wrap(Wrap { trim: true });
+    ];
+    if let Some(help) = &view.help_message {
+        summary_lines.push(Line::from(help.clone()));
+    }
+
+    let summary = Paragraph::new(summary_lines).wrap(Wrap { trim: true });
     frame.render_widget(summary, chunks[0]);
 
     if view.rows.is_empty() {
-        let empty = Paragraph::new(vec![
+        let mut empty_lines = vec![
             Line::from(view.state_label.clone()),
             Line::from(""),
             Line::from(view.empty_message),
-        ])
-        .wrap(Wrap { trim: true });
+        ];
+        if let Some(help) = &view.help_message {
+            empty_lines.push(Line::from(""));
+            empty_lines.push(Line::from(help.clone()));
+        }
+
+        let empty = Paragraph::new(empty_lines).wrap(Wrap { trim: true });
         frame.render_widget(empty, chunks[1]);
     } else {
         let rows = view.rows.iter().map(|row| {

@@ -10,6 +10,7 @@ pub struct AppPaths {
     pub settings_file: PathBuf,
     pub credentials_file: PathBuf,
     pub tokens_file: PathBuf,
+    pub history_file: PathBuf,
     pub log_file: PathBuf,
 }
 
@@ -31,6 +32,7 @@ impl AppPaths {
             settings_file: config_dir.join("settings.toml"),
             credentials_file: config_dir.join("credentials.toml"),
             tokens_file: config_dir.join("tokens.json"),
+            history_file: state_dir.join("history.json"),
             log_file: state_dir.join("soundcloud-tui.log"),
             config_dir,
             state_dir,

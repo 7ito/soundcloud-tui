@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppState, Focus, Route},
+    app::{AppState, Focus},
     ui::widgets::{pane_block, selected_row_style},
 };
 
@@ -34,26 +34,30 @@ pub fn render_library(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 }
 
 pub fn render_playlists(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let items = app
-        .playlists
-        .iter()
-        .enumerate()
-        .map(|(index, playlist)| {
-            let label = if matches!(app.route, Route::Playlist(active) if active == index) {
-                format!("{} *", playlist.title)
-            } else {
-                playlist.title.clone()
-            };
-            ListItem::new(label)
-        })
-        .collect::<Vec<_>>();
+    let title = app.playlist_panel_title();
+    let items = if let Some(message) = app.playlist_panel_placeholder() {
+        vec![ListItem::new(message)]
+    } else {
+        app.playlists
+            .iter()
+            .enumerate()
+            .map(|(index, playlist)| {
+                let label = if app.is_sidebar_playlist_active(index) {
+                    format!("{} *", playlist.title)
+                } else {
+                    playlist.title.clone()
+                };
+                ListItem::new(label)
+            })
+            .collect::<Vec<_>>()
+    };
 
     let list = List::new(items)
-        .block(pane_block("Playlists", app.focus == Focus::Playlists))
+        .block(pane_block(title.as_str(), app.focus == Focus::Playlists))
         .highlight_style(selected_row_style())
         .highlight_symbol("> ");
     let mut state = ListState::default();
-    state.select(Some(app.selected_playlist));
+    state.select((!app.playlists.is_empty()).then_some(app.selected_playlist));
 
     frame.render_stateful_widget(list, area, &mut state);
 }

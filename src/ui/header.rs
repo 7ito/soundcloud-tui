@@ -19,13 +19,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let search = Paragraph::new(Line::from(vec![
         Span::styled("> ", header_style()),
         Span::raw(app.search_query.as_str()),
-        Span::raw("  (Enter searches SoundCloud)"),
+        Span::raw("  (Enter searches SoundCloud | 1/2/3 switch search tables)"),
     ]))
     .block(pane_block("Search", app.focus == Focus::Search));
 
     let help = Paragraph::new(vec![
         Line::from(format!("Focus: {}", app.focus.label())),
-        Line::from("Tab panes | j/k move | Enter select | q quit"),
+        Line::from(app.header_help_label()),
     ])
     .block(pane_block("Help", false));
 

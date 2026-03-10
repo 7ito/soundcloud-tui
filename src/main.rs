@@ -8,6 +8,8 @@ use crossterm::{
 };
 use log::{info, warn};
 use ratatui::{Terminal, backend::CrosstermBackend};
+#[cfg(all(feature = "mpris", target_os = "linux"))]
+use soundcloud_tui::integrations::mpris::MprisIntegration;
 use soundcloud_tui::{
     app::{AppCommand, AppEvent, AppState},
     config::{self, paths::AppPaths},
@@ -16,8 +18,6 @@ use soundcloud_tui::{
     soundcloud::{auth, auth::AuthorizedSession, service::SoundcloudService},
     ui,
 };
-#[cfg(all(feature = "mpris", target_os = "linux"))]
-use soundcloud_tui::integrations::mpris::MprisIntegration;
 use tokio::{sync::mpsc, task::LocalSet};
 
 #[tokio::main]
@@ -38,13 +38,19 @@ async fn run() -> Result<()> {
     paths.ensure_dirs()?;
     config::settings::ensure_default_file(&paths)?;
     config::init_logging(&paths)?;
+    let settings = config::settings::Settings::load(&paths)?;
+    let recent_history = config::history::RecentlyPlayedStore::load(&paths)?;
 
     info!("starting soundcloud-tui auth onboarding scaffold");
 
     let bootstrap = auth::bootstrap(&paths);
 
     let mut terminal = TerminalHandle::new()?;
-    let mut app = AppState::new_onboarding(bootstrap.credentials.clone());
+    let mut app = AppState::new_onboarding_with_persistence(
+        bootstrap.credentials.clone(),
+        settings,
+        recent_history,
+    );
     if let Some(warning) = bootstrap.warning {
         app.auth.set_error(warning.clone());
         app.status = warning;
@@ -139,6 +145,16 @@ fn run_command(
                 Ok(()) => sender.send(AppEvent::CredentialsSaved(request)),
                 Err(error) => sender.send(AppEvent::CredentialsSaveFailed(error.to_string())),
             };
+        }
+        AppCommand::SaveSettings(settings) => {
+            if let Err(error) = settings.save(&paths) {
+                warn!("failed to save settings: {error}");
+            }
+        }
+        AppCommand::SaveHistory(history) => {
+            if let Err(error) = history.save(&paths) {
+                warn!("failed to save playback history: {error}");
+            }
         }
         AppCommand::ValidateSavedSession {
             credentials,

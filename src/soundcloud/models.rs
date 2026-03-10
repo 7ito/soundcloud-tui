@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::util::time::format_seconds;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum TrackAccess {
     Playable,
     Preview,
@@ -8,7 +10,7 @@ pub enum TrackAccess {
     Unknown(String),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TrackSummary {
     pub urn: String,
     pub title: String,

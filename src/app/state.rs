@@ -1,13 +1,19 @@
 use std::collections::HashMap;
 
+use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     app::{
-        reducer, Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus,
-        PlaybackIntent, RepeatMode, Route,
+        Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
+        RepeatMode, Route, reducer,
     },
-    config::{credentials::Credentials, tokens::TokenStore},
+    config::{
+        credentials::Credentials,
+        history::{RecentlyPlayedEntry, RecentlyPlayedStore},
+        settings::Settings,
+        tokens::TokenStore,
+    },
     input::events::{is_global_quit_key, map_main_key_event},
     player::{command::PlayerCommand, event::PlayerEvent},
     soundcloud::{
@@ -26,6 +32,7 @@ pub struct AppState {
     pub route: Route,
     pub focus: Focus,
     pub should_quit: bool,
+    pub show_help: bool,
     pub auth: AuthState,
     pub session: Option<AuthorizedSession>,
     pub auth_summary: String,
@@ -49,7 +56,12 @@ pub struct AppState {
     pub now_playing: NowPlaying,
     pub player: PlayerState,
     pub queue: QueueState,
+    settings: Settings,
+    help_requires_acknowledgement: bool,
     pending_commands: Vec<AppCommand>,
+    recent_history: RecentlyPlayedStore,
+    active_playlist_urn: Option<String>,
+    known_playlists: HashMap<String, SoundcloudPlaylist>,
     feed: CollectionState<FeedItem>,
     liked_tracks: CollectionState<TrackSummary>,
     albums: CollectionState<SoundcloudPlaylist>,
@@ -58,6 +70,8 @@ pub struct AppState {
     search_tracks: CollectionState<TrackSummary>,
     search_playlists: CollectionState<SoundcloudPlaylist>,
     search_users: CollectionState<UserSummary>,
+    search_view: SearchView,
+    search_cache: HashMap<String, SearchCache>,
     playlists_loading: bool,
     playlists_loaded: bool,
     playlists_error: Option<String>,
@@ -151,6 +165,7 @@ pub struct ContentView {
     pub rows: Vec<ContentRow>,
     pub state_label: String,
     pub empty_message: String,
+    pub help_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +185,21 @@ enum SelectedContent {
     },
     Playlist(SoundcloudPlaylist),
     User(UserSummary),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+enum SearchView {
+    #[default]
+    Tracks,
+    Playlists,
+    Users,
+}
+
+#[derive(Debug, Clone)]
+struct SearchCache {
+    tracks: CollectionState<TrackSummary>,
+    playlists: CollectionState<SoundcloudPlaylist>,
+    users: CollectionState<UserSummary>,
 }
 
 impl<T> Default for CollectionState<T> {
@@ -231,8 +261,32 @@ impl<T> CollectionState<T> {
     }
 }
 
+impl SearchView {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tracks => "Tracks",
+            Self::Playlists => "Playlists",
+            Self::Users => "Users",
+        }
+    }
+}
+
+impl SearchCache {
+    fn from_state(app: &AppState) -> Self {
+        Self {
+            tracks: app.search_tracks.clone(),
+            playlists: app.search_playlists.clone(),
+            users: app.search_users.clone(),
+        }
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
+        Self::new_with_persistence(Settings::default(), RecentlyPlayedStore::default())
+    }
+
+    pub fn new_with_persistence(settings: Settings, recent_history: RecentlyPlayedStore) -> Self {
         let library_items = vec![
             LibraryItem {
                 label: "Feed",
@@ -303,10 +357,12 @@ impl AppState {
             route: Route::Feed,
             focus: Focus::Library,
             should_quit: false,
+            show_help: false,
             auth: AuthState::new(Credentials::default()),
             session: None,
             auth_summary: "Unauthenticated".to_string(),
-            status: "Tab cycles panes, arrows move, Enter selects, q quits.".to_string(),
+            status: "Tab cycles panes, arrows move, Enter selects, ? opens help, q quits."
+                .to_string(),
             tick_count: 0,
             viewport: Viewport {
                 width: 0,
@@ -347,7 +403,12 @@ impl AppState {
                 repeat_mode: RepeatMode::Off,
             },
             queue: QueueState::default(),
+            settings,
+            help_requires_acknowledgement: false,
             pending_commands: Vec::new(),
+            recent_history,
+            active_playlist_urn: None,
+            known_playlists: HashMap::new(),
             feed: CollectionState::default(),
             liked_tracks: CollectionState::default(),
             albums: CollectionState::default(),
@@ -356,6 +417,8 @@ impl AppState {
             search_tracks: CollectionState::default(),
             search_playlists: CollectionState::default(),
             search_users: CollectionState::default(),
+            search_view: SearchView::Tracks,
+            search_cache: HashMap::new(),
             playlists_loading: false,
             playlists_loaded: false,
             playlists_error: None,
@@ -364,7 +427,19 @@ impl AppState {
     }
 
     pub fn new_onboarding(credentials: Credentials) -> Self {
-        let mut app = Self::new();
+        Self::new_onboarding_with_persistence(
+            credentials,
+            Settings::default(),
+            RecentlyPlayedStore::default(),
+        )
+    }
+
+    pub fn new_onboarding_with_persistence(
+        credentials: Credentials,
+        settings: Settings,
+        recent_history: RecentlyPlayedStore,
+    ) -> Self {
+        let mut app = Self::new_with_persistence(settings, recent_history);
         app.mode = AppMode::Auth;
         app.auth = AuthState::new(credentials);
         app.auth_summary = "Not authenticated yet".to_string();
@@ -446,6 +521,11 @@ impl AppState {
                 append,
             } => {
                 self.session = Some(session);
+                for item in &page.items {
+                    if let FeedOrigin::Playlist(playlist) = &item.origin {
+                        self.remember_playlist(playlist.clone());
+                    }
+                }
                 self.feed.apply_page(page, append);
                 self.status = format!("Loaded {} feed items.", self.feed.items.len());
             }
@@ -472,6 +552,9 @@ impl AppState {
                 append,
             } => {
                 self.session = Some(session);
+                for playlist in &page.items {
+                    self.remember_playlist(playlist.clone());
+                }
                 self.albums.apply_page(page, append);
                 self.status = format!("Loaded {} album-like playlists.", self.albums.items.len());
             }
@@ -538,6 +621,7 @@ impl AppState {
 
                 self.session = Some(session);
                 self.apply_search_results(results);
+                self.cache_search_results();
                 self.status = format!(
                     "Search ready: {} tracks, {} playlists, {} users.",
                     self.search_tracks.items.len(),
@@ -566,6 +650,7 @@ impl AppState {
 
                 self.session = Some(session);
                 self.search_tracks.apply_page(page, true);
+                self.cache_search_results();
                 self.status = format!(
                     "Loaded {} track search results.",
                     self.search_tracks.items.len()
@@ -665,6 +750,10 @@ impl AppState {
                     .collect(),
                 state_label: self.feed.state_label(),
                 empty_message: "No feed activity is available right now.".to_string(),
+                help_message: Some(
+                    "Enter plays tracks and opens playlists when the feed row points to one."
+                        .to_string(),
+                ),
             },
             Route::LikedSongs => ContentView {
                 title: "Liked Songs".to_string(),
@@ -678,14 +767,24 @@ impl AppState {
                     .collect(),
                 state_label: self.liked_tracks.state_label(),
                 empty_message: "No liked tracks were returned by SoundCloud.".to_string(),
+                help_message: Some("Press Enter to play from your liked queue.".to_string()),
             },
             Route::RecentlyPlayed => ContentView {
                 title: "Recently Played".to_string(),
-                subtitle: "Local history remains a later phase.".to_string(),
-                columns: ["Title", "Artist", "Last Context", "Length"],
-                rows: self.recent_rows.clone(),
-                state_label: "Local placeholder".to_string(),
-                empty_message: "Recently played is not wired yet.".to_string(),
+                subtitle: "Local playback history stored on this machine.".to_string(),
+                columns: ["Title", "Artist", "Last Context", "Played"],
+                rows: self
+                    .recent_history
+                    .entries
+                    .iter()
+                    .map(history_row)
+                    .collect(),
+                state_label: self.recent_history_state_label(),
+                empty_message: "Play a track to start building local history.".to_string(),
+                help_message: Some(
+                    "Recently Played persists across restarts and seeds a playable queue."
+                        .to_string(),
+                ),
             },
             Route::Albums => ContentView {
                 title: "Albums".to_string(),
@@ -706,6 +805,7 @@ impl AppState {
                     .collect(),
                 state_label: self.albums.state_label(),
                 empty_message: "No album-like playlists were found.".to_string(),
+                help_message: Some("Press Enter to open an album as playlist detail.".to_string()),
             },
             Route::Following => ContentView {
                 title: "Following".to_string(),
@@ -730,11 +830,15 @@ impl AppState {
                     .collect(),
                 state_label: self.following.state_label(),
                 empty_message: "This account is not following anyone yet.".to_string(),
+                help_message: Some(
+                    "Press Enter to open a followed creator profile when SoundCloud provides one."
+                        .to_string(),
+                ),
             },
-            Route::Playlist(index) => {
-                let playlist = self.playlists.get(index);
+            Route::Playlist => {
+                let playlist = self.active_playlist();
                 let tracks = playlist
-                    .and_then(|playlist| playlist.urn.as_ref())
+                    .map(|playlist| playlist.urn.as_str())
                     .and_then(|urn| self.playlist_tracks.get(urn));
 
                 ContentView {
@@ -742,7 +846,7 @@ impl AppState {
                         .map(|playlist| playlist.title.clone())
                         .unwrap_or_else(|| "Playlist".to_string()),
                     subtitle: playlist
-                        .map(sidebar_playlist_subtitle)
+                        .map(playlist_summary_subtitle)
                         .unwrap_or_else(|| "Playlist details are loading.".to_string()),
                     columns: ["Title", "Artist", "Access", "Length"],
                     rows: tracks
@@ -752,24 +856,50 @@ impl AppState {
                         .map(CollectionState::state_label)
                         .unwrap_or_else(|| "Waiting".to_string()),
                     empty_message: "No tracks are available for this playlist.".to_string(),
+                    help_message: Some(
+                        "Enter plays from this playlist queue. Ctrl+R reloads the track list."
+                            .to_string(),
+                    ),
                 }
             }
-            Route::Search => ContentView {
-                title: format!("Search: {}", self.search_query),
-                subtitle: format!(
-                    "Track-first results. Also found {} playlists and {} users.",
-                    self.search_playlists.items.len(),
-                    self.search_users.items.len(),
-                ),
-                columns: ["Title", "Artist", "Access", "Length"],
-                rows: self
-                    .search_tracks
-                    .items
-                    .iter()
-                    .map(track_row_with_access)
-                    .collect(),
-                state_label: self.search_tracks.state_label(),
-                empty_message: "No matching tracks were found.".to_string(),
+            Route::Search => match self.search_view {
+                SearchView::Tracks => ContentView {
+                    title: format!("Search: {}", self.search_query),
+                    subtitle: self.search_subtitle(),
+                    columns: ["Title", "Artist", "Access", "Length"],
+                    rows: self
+                        .search_tracks
+                        .items
+                        .iter()
+                        .map(track_row_with_access)
+                        .collect(),
+                    state_label: self.search_tracks.state_label(),
+                    empty_message: "No matching tracks were found.".to_string(),
+                    help_message: Some(self.search_help_message()),
+                },
+                SearchView::Playlists => ContentView {
+                    title: format!("Search: {}", self.search_query),
+                    subtitle: self.search_subtitle(),
+                    columns: ["Playlist", "Creator", "Tracks", "Year"],
+                    rows: self
+                        .search_playlists
+                        .items
+                        .iter()
+                        .map(playlist_row)
+                        .collect(),
+                    state_label: self.search_playlists.state_label(),
+                    empty_message: "No matching playlists were found.".to_string(),
+                    help_message: Some(self.search_help_message()),
+                },
+                SearchView::Users => ContentView {
+                    title: format!("Search: {}", self.search_query),
+                    subtitle: self.search_subtitle(),
+                    columns: ["Creator", "Followers", "Catalog", "Profile"],
+                    rows: self.search_users.items.iter().map(user_row).collect(),
+                    state_label: self.search_users.state_label(),
+                    empty_message: "No matching creators were found.".to_string(),
+                    help_message: Some(self.search_help_message()),
+                },
             },
         }
     }
@@ -794,6 +924,94 @@ impl AppState {
         }
     }
 
+    pub fn header_help_label(&self) -> &'static str {
+        if self.show_help {
+            "Enter/Esc close help | Ctrl+R reload | q quit"
+        } else {
+            "? help | Ctrl+R reload | Tab panes | j/k move | Enter select | q quit"
+        }
+    }
+
+    pub fn playlist_panel_title(&self) -> String {
+        if self.playlists_loading {
+            "Playlists (loading...)".to_string()
+        } else if let Some(error) = &self.playlists_error {
+            format!("Playlists (error: {error})")
+        } else if self.playlists_loaded && self.playlists.is_empty() {
+            "Playlists (empty)".to_string()
+        } else if self.playlists_next_href.is_some() {
+            format!("Playlists ({}, more available)", self.playlists.len())
+        } else {
+            format!("Playlists ({})", self.playlists.len())
+        }
+    }
+
+    pub fn playlist_panel_placeholder(&self) -> Option<String> {
+        if self.playlists_loading && self.playlists.is_empty() {
+            Some("Loading playlists...".to_string())
+        } else if let Some(error) = &self.playlists_error {
+            Some(format!("Error loading playlists. Ctrl+R retries. {error}"))
+        } else if self.playlists_loaded && self.playlists.is_empty() {
+            Some("No playlists are available for this account yet.".to_string())
+        } else {
+            None
+        }
+    }
+
+    pub fn is_sidebar_playlist_active(&self, index: usize) -> bool {
+        self.route == Route::Playlist
+            && self
+                .playlists
+                .get(index)
+                .and_then(|playlist| playlist.urn.as_deref())
+                == self.active_playlist_urn.as_deref()
+    }
+
+    pub fn queue_status_label(&self) -> String {
+        let queue_len = self.queue.tracks.len();
+        let queue_position = self
+            .queue
+            .current_index
+            .map(|index| format!("{}/{}", index + 1, queue_len.max(1)))
+            .unwrap_or_else(|| format!("0/{}", queue_len));
+
+        format!(
+            "Queue {} | Repeat {} | Shuffle {}",
+            queue_position,
+            self.player.repeat_mode.label(),
+            if self.player.shuffle_enabled {
+                "On"
+            } else {
+                "Off"
+            }
+        )
+    }
+
+    pub fn help_overlay_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            "Welcome to soundcloud-tui.".to_string(),
+            "Tab / Shift+Tab move across panes. j/k or arrows move within a pane. Enter selects."
+                .to_string(),
+            "Space toggles playback. n/p move through the queue. Left/Right seek. +/- set volume."
+                .to_string(),
+            "r cycles repeat mode. Ctrl+R or F5 reloads the current route. ? reopens this help."
+                .to_string(),
+            "Search results have three tables: 1 tracks, 2 playlists, 3 users.".to_string(),
+            "Recently Played is stored locally and survives restarts on this machine.".to_string(),
+        ];
+
+        if self.help_requires_acknowledgement {
+            lines.push(
+                "Close this overlay once to disable automatic first-run help on future launches."
+                    .to_string(),
+            );
+        } else {
+            lines.push("Press Enter, Esc, or ? to close this overlay.".to_string());
+        }
+
+        lines
+    }
+
     pub fn sync_route_from_library(&mut self) {
         if let Some(item) = self.library_items.get(self.selected_library) {
             self.set_route(item.route);
@@ -809,7 +1027,12 @@ impl AppState {
             .selected_playlist
             .min(self.playlists.len().saturating_sub(1));
         self.selected_playlist = playlist_index;
-        self.set_route(Route::Playlist(playlist_index));
+
+        if let Some(playlist) = self.playlists.get(playlist_index) {
+            self.active_playlist_urn = playlist.urn.clone();
+        }
+
+        self.set_route(Route::Playlist);
     }
 
     pub fn set_route(&mut self, route: Route) {
@@ -826,10 +1049,14 @@ impl AppState {
 
     pub fn route_title(&self) -> String {
         match self.route {
-            Route::Playlist(index) => self
-                .playlists
-                .get(index)
+            Route::Playlist => self
+                .active_playlist()
                 .map(|playlist| playlist.title.clone())
+                .or_else(|| {
+                    self.playlists
+                        .get(self.selected_playlist)
+                        .map(|playlist| playlist.title.clone())
+                })
                 .unwrap_or_else(|| "Playlist".to_string()),
             _ => self.route.label().to_string(),
         }
@@ -865,10 +1092,15 @@ impl AppState {
                 }
             }
             Some(SelectedContent::Playlist(playlist)) => {
-                self.status = format!("Inspected playlist {}.", playlist.title);
+                self.open_playlist(playlist);
             }
             Some(SelectedContent::User(user)) => {
-                self.status = format!("Inspected creator {}.", user.username);
+                if let Some(url) = user.permalink_url.clone() {
+                    self.queue_command(AppCommand::OpenUrl(url));
+                    self.status = format!("Opening {} in your browser.", user.username);
+                } else {
+                    self.status = format!("No profile URL is available for {}.", user.username);
+                }
             }
             None => {
                 let Some(row) = self.current_content_row() else {
@@ -941,13 +1173,24 @@ impl AppState {
                 selected_queue_index.map(|selected| (queue, selected))
             }
             Route::LikedSongs => Some((self.liked_tracks.items.clone(), self.selected_content)),
-            Route::Playlist(index) => {
-                let urn = self.playlists.get(index)?.urn.as_ref()?;
+            Route::RecentlyPlayed => Some((
+                self.recent_history
+                    .entries
+                    .iter()
+                    .map(|entry| entry.track.clone())
+                    .collect(),
+                self.selected_content,
+            )),
+            Route::Playlist => {
+                let urn = self.active_playlist_urn.as_ref()?;
                 let tracks = self.playlist_tracks.get(urn)?.items.clone();
                 Some((tracks, self.selected_content))
             }
-            Route::Search => Some((self.search_tracks.items.clone(), self.selected_content)),
-            Route::RecentlyPlayed | Route::Albums | Route::Following => None,
+            Route::Search if self.search_view == SearchView::Tracks => {
+                Some((self.search_tracks.items.clone(), self.selected_content))
+            }
+            Route::Search => None,
+            Route::Albums | Route::Following => None,
         }
         .and_then(|(tracks, selected)| {
             if selected < tracks.len() {
@@ -1174,7 +1417,14 @@ impl AppState {
 
     fn apply_player_event(&mut self, event: PlayerEvent) {
         match event {
-            PlayerEvent::PlaybackStarted | PlayerEvent::PlaybackResumed => {
+            PlayerEvent::PlaybackStarted => {
+                self.record_recent_playback();
+                self.player.status = PlaybackStatus::Playing;
+                if let Some(track) = &self.now_playing.track {
+                    self.status = format!("Playing {}.", track.title);
+                }
+            }
+            PlayerEvent::PlaybackResumed => {
                 self.player.status = PlaybackStatus::Playing;
                 if let Some(track) = &self.now_playing.track {
                     self.status = format!("Playing {}.", track.title);
@@ -1332,12 +1582,8 @@ impl AppState {
                 self.status = "Loading more followed creators...".to_string();
                 true
             }
-            Route::Playlist(index) => {
-                let Some(urn) = self
-                    .playlists
-                    .get(index)
-                    .and_then(|playlist| playlist.urn.clone())
-                else {
+            Route::Playlist => {
+                let Some(urn) = self.active_playlist_urn.clone() else {
                     return false;
                 };
                 let next_href = {
@@ -1363,6 +1609,9 @@ impl AppState {
                 true
             }
             Route::Search => {
+                if self.search_view != SearchView::Tracks {
+                    return false;
+                }
                 if self.search_tracks.loading {
                     return false;
                 }
@@ -1434,7 +1683,20 @@ impl AppState {
                 }
             }
             AppMode::Main => {
+                if self.show_help {
+                    self.handle_help_key(key);
+                    return;
+                }
+
+                if self.handle_main_shortcut_key(key) {
+                    return;
+                }
+
                 if self.focus == Focus::Search && self.handle_search_key(key) {
+                    return;
+                }
+
+                if self.handle_route_key(key) {
                     return;
                 }
 
@@ -1446,6 +1708,59 @@ impl AppState {
                     self.apply(action);
                 }
             }
+        }
+    }
+
+    fn handle_help_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
+                self.dismiss_help();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('?') => {
+                self.show_help = true;
+                self.status = "Showing help and first-run guidance.".to_string();
+                true
+            }
+            KeyCode::F(5) => {
+                self.reload_current_route();
+                true
+            }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.reload_current_route();
+                true
+            }
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::NONE => {
+                self.cycle_repeat_mode();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_route_key(&mut self, key: KeyEvent) -> bool {
+        match self.route {
+            Route::Search => match key.code {
+                KeyCode::Char('1') => {
+                    self.set_search_view(SearchView::Tracks);
+                    true
+                }
+                KeyCode::Char('2') => {
+                    self.set_search_view(SearchView::Playlists);
+                    true
+                }
+                KeyCode::Char('3') => {
+                    self.set_search_view(SearchView::Users);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 
@@ -1626,6 +1941,12 @@ impl AppState {
         self.session = Some(session.clone());
         self.set_auth_session(&session);
         self.reset_live_data();
+        if self.settings.show_help_on_startup {
+            self.show_help = true;
+            self.help_requires_acknowledgement = true;
+            self.status = "Connected successfully. Review the help overlay for first-run guidance."
+                .to_string();
+        }
         self.request_playlists_load(false);
         self.request_route_load(false);
     }
@@ -1692,7 +2013,16 @@ impl AppState {
                     append,
                 });
             }
-            Route::RecentlyPlayed => {}
+            Route::RecentlyPlayed => {
+                self.status = if self.recent_history.entries.is_empty() {
+                    "Recently Played is empty until you finish a successful playback.".to_string()
+                } else {
+                    format!(
+                        "Loaded {} locally stored plays.",
+                        self.recent_history.entries.len()
+                    )
+                };
+            }
             Route::Albums => {
                 if self.albums.loading || (!append && self.albums.loaded) {
                     return;
@@ -1723,12 +2053,8 @@ impl AppState {
                     append,
                 });
             }
-            Route::Playlist(index) => {
-                let Some(urn) = self
-                    .playlists
-                    .get(index)
-                    .and_then(|playlist| playlist.urn.clone())
-                else {
+            Route::Playlist => {
+                let Some(urn) = self.active_playlist_urn.clone() else {
                     return;
                 };
                 let next_href = {
@@ -1760,6 +2086,16 @@ impl AppState {
                     self.maybe_queue_current_route_next_page();
                     return;
                 }
+                if !append {
+                    if let Some(cache) = self.search_cache.get(&self.search_query).cloned() {
+                        self.search_tracks = cache.tracks;
+                        self.search_playlists = cache.playlists;
+                        self.search_users = cache.users;
+                        self.status =
+                            format!("Loaded cached search results for '{}'.", self.search_query);
+                        return;
+                    }
+                }
                 self.search_tracks.start_loading(false);
                 self.search_playlists.start_loading(false);
                 self.search_users.start_loading(false);
@@ -1777,6 +2113,8 @@ impl AppState {
         self.playlists_loaded = false;
         self.playlists_error = None;
         self.playlists_next_href = None;
+        self.active_playlist_urn = None;
+        self.known_playlists.clear();
         self.feed = CollectionState::default();
         self.liked_tracks = CollectionState::default();
         self.albums = CollectionState::default();
@@ -1785,6 +2123,8 @@ impl AppState {
         self.search_tracks = CollectionState::default();
         self.search_playlists = CollectionState::default();
         self.search_users = CollectionState::default();
+        self.search_view = SearchView::Tracks;
+        self.search_cache.clear();
         self.selected_playlist = 0;
         self.selected_content = 0;
         self.queue = QueueState::default();
@@ -1811,13 +2151,16 @@ impl AppState {
         let mapped = page
             .items
             .into_iter()
-            .map(|playlist| SidebarPlaylist {
-                urn: Some(playlist.urn),
-                title: playlist.title,
-                description: playlist.description,
-                creator: Some(playlist.creator),
-                track_count: Some(playlist.track_count),
-                tracks: Vec::new(),
+            .map(|playlist| {
+                self.remember_playlist(playlist.clone());
+                SidebarPlaylist {
+                    urn: Some(playlist.urn),
+                    title: playlist.title,
+                    description: playlist.description,
+                    creator: Some(playlist.creator),
+                    track_count: Some(playlist.track_count),
+                    tracks: Vec::new(),
+                }
             })
             .collect::<Vec<_>>();
 
@@ -1829,7 +2172,7 @@ impl AppState {
 
         if self.playlists.is_empty() {
             self.selected_playlist = 0;
-            if matches!(self.route, Route::Playlist(_)) {
+            if self.route == Route::Playlist {
                 self.route = Route::Feed;
             }
         } else {
@@ -1841,8 +2184,164 @@ impl AppState {
 
     fn apply_search_results(&mut self, results: SearchResults) {
         self.search_tracks.apply_page(results.tracks, false);
+        for playlist in &results.playlists.items {
+            self.remember_playlist(playlist.clone());
+        }
         self.search_playlists.apply_page(results.playlists, false);
         self.search_users.apply_page(results.users, false);
+    }
+
+    fn remember_playlist(&mut self, playlist: SoundcloudPlaylist) {
+        self.known_playlists.insert(playlist.urn.clone(), playlist);
+    }
+
+    fn active_playlist(&self) -> Option<&SoundcloudPlaylist> {
+        self.active_playlist_urn
+            .as_ref()
+            .and_then(|urn| self.known_playlists.get(urn))
+    }
+
+    fn open_playlist(&mut self, playlist: SoundcloudPlaylist) {
+        let urn = playlist.urn.clone();
+        self.remember_playlist(playlist.clone());
+        self.active_playlist_urn = Some(urn.clone());
+
+        if let Some(index) = self
+            .playlists
+            .iter()
+            .position(|sidebar| sidebar.urn.as_deref() == Some(urn.as_str()))
+        {
+            self.selected_playlist = index;
+        }
+
+        self.set_route(Route::Playlist);
+        self.status = format!("Opened playlist {}.", playlist.title);
+    }
+
+    fn recent_history_state_label(&self) -> String {
+        if self.recent_history.entries.is_empty() {
+            "Empty".to_string()
+        } else {
+            format!("Loaded {} local plays", self.recent_history.entries.len())
+        }
+    }
+
+    fn search_subtitle(&self) -> String {
+        format!(
+            "Showing {} for '{}'. Tracks: {} | Playlists: {} | Users: {}",
+            self.search_view.label(),
+            self.search_query,
+            self.search_tracks.items.len(),
+            self.search_playlists.items.len(),
+            self.search_users.items.len(),
+        )
+    }
+
+    fn search_help_message(&self) -> String {
+        let pagination = if self.search_view == SearchView::Tracks {
+            "Tracks paginate with j/k at the end of the table."
+        } else {
+            "Playlist and creator results are first-page snapshots for now."
+        };
+
+        format!(
+            "Press 1/2/3 to switch search tables. {} Enter opens playlists or profiles.",
+            pagination
+        )
+    }
+
+    fn set_search_view(&mut self, search_view: SearchView) {
+        self.search_view = search_view;
+        self.selected_content = 0;
+        self.status = format!("Showing {} search results.", search_view.label());
+    }
+
+    fn cache_search_results(&mut self) {
+        if self.search_query.trim().is_empty() {
+            return;
+        }
+
+        self.search_cache
+            .insert(self.search_query.clone(), SearchCache::from_state(self));
+    }
+
+    fn dismiss_help(&mut self) {
+        self.show_help = false;
+
+        if self.help_requires_acknowledgement {
+            self.help_requires_acknowledgement = false;
+            if self.settings.show_help_on_startup {
+                self.settings.show_help_on_startup = false;
+                self.queue_command(AppCommand::SaveSettings(self.settings.clone()));
+            }
+            self.status = "Help dismissed. You can reopen it anytime with ?.".to_string();
+        } else {
+            self.status = "Help closed.".to_string();
+        }
+    }
+
+    fn cycle_repeat_mode(&mut self) {
+        let next_mode = match self.player.repeat_mode {
+            RepeatMode::Off => RepeatMode::Track,
+            RepeatMode::Track => RepeatMode::Queue,
+            RepeatMode::Queue => RepeatMode::Off,
+        };
+        self.set_repeat_mode(next_mode);
+    }
+
+    fn reload_current_route(&mut self) {
+        if self.focus == Focus::Playlists {
+            self.playlists.clear();
+            self.playlists_loading = false;
+            self.playlists_loaded = false;
+            self.playlists_error = None;
+            self.playlists_next_href = None;
+            self.status = "Reloading playlists...".to_string();
+            self.request_playlists_load(false);
+            return;
+        }
+
+        match self.route {
+            Route::Feed => self.feed = CollectionState::default(),
+            Route::LikedSongs => self.liked_tracks = CollectionState::default(),
+            Route::RecentlyPlayed => {
+                self.status = "Recently Played is local and already up to date.".to_string();
+                return;
+            }
+            Route::Albums => self.albums = CollectionState::default(),
+            Route::Following => self.following = CollectionState::default(),
+            Route::Playlist => {
+                let Some(urn) = self.active_playlist_urn.clone() else {
+                    self.status = "No playlist is currently open.".to_string();
+                    return;
+                };
+                self.playlist_tracks.insert(urn, CollectionState::default());
+            }
+            Route::Search => {
+                self.search_cache.remove(&self.search_query);
+                self.search_tracks = CollectionState::default();
+                self.search_playlists = CollectionState::default();
+                self.search_users = CollectionState::default();
+            }
+        }
+
+        if self.route == Route::Search && self.search_query.trim().is_empty() {
+            self.status = "Enter a search query first.".to_string();
+            return;
+        }
+
+        self.status = format!("Reloading {}...", self.route_title());
+        self.request_route_load(false);
+    }
+
+    fn record_recent_playback(&mut self) {
+        let Some(track) = self.now_playing.track.clone() else {
+            return;
+        };
+
+        self.recent_history
+            .record(track, self.now_playing.context.clone());
+        self.queue_command(AppCommand::SaveHistory(self.recent_history.clone()));
     }
 
     fn current_selected_content(&self) -> Option<SelectedContent> {
@@ -1876,7 +2375,15 @@ impl AppState {
                         context: "Liked Songs".to_string(),
                     })
             }
-            Route::RecentlyPlayed => None,
+            Route::RecentlyPlayed => self
+                .recent_history
+                .entries
+                .get(index)
+                .cloned()
+                .map(|entry| SelectedContent::Track {
+                    track: entry.track,
+                    context: entry.context,
+                }),
             Route::Albums => self
                 .albums
                 .items
@@ -1889,10 +2396,9 @@ impl AppState {
                 .get(index)
                 .cloned()
                 .map(SelectedContent::User),
-            Route::Playlist(route_index) => self
-                .playlists
-                .get(route_index)
-                .and_then(|playlist| playlist.urn.as_ref())
+            Route::Playlist => self
+                .active_playlist_urn
+                .as_ref()
                 .and_then(|urn| self.playlist_tracks.get(urn))
                 .and_then(|state| state.items.get(index))
                 .cloned()
@@ -1900,16 +2406,26 @@ impl AppState {
                     context: self.route_title(),
                     track,
                 }),
-            Route::Search => {
-                self.search_tracks
+            Route::Search => match self.search_view {
+                SearchView::Tracks => self.search_tracks.items.get(index).cloned().map(|track| {
+                    SelectedContent::Track {
+                        track,
+                        context: format!("Search: {}", self.search_query),
+                    }
+                }),
+                SearchView::Playlists => self
+                    .search_playlists
                     .items
                     .get(index)
                     .cloned()
-                    .map(|track| SelectedContent::Track {
-                        track,
-                        context: format!("Search: {}", self.search_query),
-                    })
-            }
+                    .map(SelectedContent::Playlist),
+                SearchView::Users => self
+                    .search_users
+                    .items
+                    .get(index)
+                    .cloned()
+                    .map(SelectedContent::User),
+            },
         }
     }
 
@@ -1923,6 +2439,7 @@ impl AppState {
         self.search_query = query;
         self.search_cursor = self.search_query.chars().count();
         self.route = Route::Search;
+        self.search_view = SearchView::Tracks;
         self.selected_content = 0;
         self.status = format!("Searching SoundCloud for '{}'...", self.search_query);
         self.request_route_load(false);
@@ -1971,6 +2488,7 @@ impl AppState {
                 rows: self.feed_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock feed rows available.".to_string(),
+                help_message: Some("Mock feed preview.".to_string()),
             },
             Route::LikedSongs => ContentView {
                 title: "Liked Songs".to_string(),
@@ -1979,6 +2497,7 @@ impl AppState {
                 rows: self.liked_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock liked songs available.".to_string(),
+                help_message: Some("Mock liked songs preview.".to_string()),
             },
             Route::RecentlyPlayed => ContentView {
                 title: "Recently Played".to_string(),
@@ -1987,6 +2506,7 @@ impl AppState {
                 rows: self.recent_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock history available.".to_string(),
+                help_message: Some("Mock recently played preview.".to_string()),
             },
             Route::Albums => ContentView {
                 title: "Albums".to_string(),
@@ -1995,6 +2515,7 @@ impl AppState {
                 rows: self.album_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock albums available.".to_string(),
+                help_message: Some("Mock albums preview.".to_string()),
             },
             Route::Following => ContentView {
                 title: "Following".to_string(),
@@ -2003,9 +2524,10 @@ impl AppState {
                 rows: self.following_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock following rows available.".to_string(),
+                help_message: Some("Mock following preview.".to_string()),
             },
-            Route::Playlist(index) => {
-                let playlist = &self.playlists[index];
+            Route::Playlist => {
+                let playlist = &self.playlists[self.selected_playlist];
                 ContentView {
                     title: playlist.title.clone(),
                     subtitle: playlist.description.clone(),
@@ -2013,6 +2535,7 @@ impl AppState {
                     rows: playlist.tracks.clone(),
                     state_label: "Mock data".to_string(),
                     empty_message: "No mock playlist tracks available.".to_string(),
+                    help_message: Some("Mock playlist browsing preview.".to_string()),
                 }
             }
             Route::Search => ContentView {
@@ -2022,6 +2545,7 @@ impl AppState {
                 rows: self.search_rows.clone(),
                 state_label: "Mock data".to_string(),
                 empty_message: "No mock search results available.".to_string(),
+                help_message: Some("Press 1, 2, or 3 to switch search result tables.".to_string()),
             },
         }
     }
@@ -2131,17 +2655,59 @@ fn track_row_with_access(track: &TrackSummary) -> ContentRow {
     }
 }
 
-fn sidebar_playlist_subtitle(playlist: &SidebarPlaylist) -> String {
+fn playlist_row(playlist: &SoundcloudPlaylist) -> ContentRow {
+    ContentRow {
+        columns: [
+            playlist.title.clone(),
+            playlist.creator.clone(),
+            playlist.track_count_label(),
+            playlist.year_label(),
+        ],
+    }
+}
+
+fn user_row(user: &UserSummary) -> ContentRow {
+    ContentRow {
+        columns: [
+            user.username.clone(),
+            user.followers_label(),
+            user.spotlight_label(),
+            if user.permalink_url.is_some() {
+                "Profile".to_string()
+            } else {
+                "--".to_string()
+            },
+        ],
+    }
+}
+
+fn history_row(entry: &RecentlyPlayedEntry) -> ContentRow {
+    ContentRow {
+        columns: [
+            entry.track.title.clone(),
+            entry.track.artist.clone(),
+            entry.context.clone(),
+            relative_time_label(entry.played_at_epoch),
+        ],
+    }
+}
+
+fn relative_time_label(played_at_epoch: i64) -> String {
+    let elapsed = (Utc::now().timestamp() - played_at_epoch).max(0);
+
+    match elapsed {
+        0..=59 => "just now".to_string(),
+        60..=3_599 => format!("{}m ago", elapsed / 60),
+        3_600..=86_399 => format!("{}h ago", elapsed / 3_600),
+        86_400..=604_799 => format!("{}d ago", elapsed / 86_400),
+        _ => format!("{}w ago", elapsed / 604_800),
+    }
+}
+
+fn playlist_summary_subtitle(playlist: &SoundcloudPlaylist) -> String {
     if !playlist.description.trim().is_empty() {
         playlist.description.clone()
     } else {
-        match (&playlist.creator, playlist.track_count) {
-            (Some(creator), Some(track_count)) => {
-                format!("By {} - {} tracks", creator, track_count)
-            }
-            (Some(creator), None) => format!("By {}", creator),
-            (None, Some(track_count)) => format!("{} tracks", track_count),
-            (None, None) => "Playlist details".to_string(),
-        }
+        format!("By {} - {}", playlist.creator, playlist.track_count_label())
     }
 }

@@ -47,7 +47,7 @@ pub enum Route {
     RecentlyPlayed,
     Albums,
     Following,
-    Playlist(usize),
+    Playlist,
     Search,
 }
 
@@ -59,7 +59,7 @@ impl Route {
             Self::RecentlyPlayed => "Recently Played",
             Self::Albums => "Albums",
             Self::Following => "Following",
-            Self::Playlist(_) => "Playlist",
+            Self::Playlist => "Playlist",
             Self::Search => "Search",
         }
     }
@@ -67,7 +67,7 @@ impl Route {
     pub fn is_track_view(self) -> bool {
         matches!(
             self,
-            Self::Feed | Self::LikedSongs | Self::RecentlyPlayed | Self::Playlist(_) | Self::Search
+            Self::Feed | Self::LikedSongs | Self::RecentlyPlayed | Self::Playlist | Self::Search
         )
     }
 }

@@ -1,11 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use soundcloud_tui::{
-    app::{AppCommand, AppEvent, AppState, AuthFocus, AuthStep, Route},
-    config::{credentials::Credentials, tokens::TokenStore},
+    app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Route},
+    config::{
+        credentials::Credentials, history::RecentlyPlayedStore, settings::Settings,
+        tokens::TokenStore,
+    },
     player::event::PlayerEvent,
     soundcloud::{
         auth::{self, AuthSession, AuthorizedSession},
-        models::TrackSummary,
+        models::{PlaylistSummary, SearchResults, TrackSummary, UserSummary},
+        paging::Page,
     },
 };
 
@@ -144,6 +148,143 @@ fn track_end_advances_to_next_queue_item() {
     assert_eq!(app.now_playing.title, second.title);
 }
 
+#[test]
+fn auth_complete_shows_help_and_persists_dismissal() {
+    let mut app = AppState::new_onboarding_with_persistence(
+        Credentials::default(),
+        Settings {
+            theme: "default".to_string(),
+            show_help_on_startup: true,
+        },
+        RecentlyPlayedStore::default(),
+    );
+
+    app.dispatch_event(AppEvent::AuthCompleted(Ok(dummy_session())));
+
+    assert_eq!(app.mode, AppMode::Main);
+    assert!(app.show_help);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert!(!app.show_help);
+
+    let mut saved = None;
+    while let Some(command) = app.take_pending_command() {
+        if let AppCommand::SaveSettings(settings) = command {
+            saved = Some(settings);
+        }
+    }
+
+    let saved = saved.expect("expected SaveSettings command");
+    assert!(!saved.show_help_on_startup);
+}
+
+#[test]
+fn playback_started_populates_recently_played_and_queues_save() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:1", "First Track");
+    app.session = Some(dummy_session());
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title.clone();
+    app.now_playing.artist = track.artist.clone();
+    app.now_playing.context = "Liked Songs".to_string();
+
+    app.dispatch_event(AppEvent::Player(PlayerEvent::PlaybackStarted));
+    app.set_route(Route::RecentlyPlayed);
+
+    let view = app.current_content();
+    assert_eq!(view.rows[0].columns[0], track.title);
+    assert_eq!(view.rows[0].columns[2], "Liked Songs");
+
+    match app.take_pending_command() {
+        Some(AppCommand::SaveHistory(history)) => {
+            assert_eq!(history.entries.len(), 1);
+            assert_eq!(history.entries[0].track.urn, "soundcloud:tracks:1");
+        }
+        other => panic!("expected SaveHistory command, got {other:?}"),
+    }
+}
+
+#[test]
+fn search_result_shortcuts_switch_between_tables() {
+    let mut app = AppState::new();
+    let playlist = dummy_playlist("soundcloud:playlists:1", "Night Drive");
+    app.session = Some(dummy_session());
+    app.search_query = "night".to_string();
+    app.search_cursor = 5;
+    app.set_route(Route::Search);
+    while app.take_pending_command().is_some() {}
+
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        query: "night".to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: vec![dummy_track("soundcloud:tracks:9", "Night Track")],
+                next_href: None,
+            },
+            playlists: Page {
+                items: vec![playlist.clone()],
+                next_href: None,
+            },
+            users: Page {
+                items: vec![dummy_user()],
+                next_href: None,
+            },
+        },
+    });
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.current_content().columns[0], "Playlist");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('3'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.current_content().columns[0], "Creator");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('1'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.current_content().columns[0], "Title");
+}
+
+#[test]
+fn selecting_album_opens_playlist_detail_route() {
+    let mut app = AppState::new();
+    let playlist = dummy_playlist("soundcloud:playlists:2", "Weekend Album");
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::AlbumsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![playlist.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+
+    app.set_route(Route::Albums);
+    app.select_current_content();
+
+    assert_eq!(app.route, Route::Playlist);
+    assert_eq!(app.route_title(), playlist.title);
+
+    match app.take_pending_command() {
+        Some(AppCommand::LoadPlaylistTracks { playlist_urn, .. }) => {
+            assert_eq!(playlist_urn, "soundcloud:playlists:2")
+        }
+        other => panic!("expected LoadPlaylistTracks command, got {other:?}"),
+    }
+}
+
 fn dummy_session() -> AuthorizedSession {
     AuthorizedSession {
         profile: AuthSession {
@@ -176,5 +317,33 @@ fn dummy_track(urn: &str, title: &str) -> TrackSummary {
         artwork_url: None,
         access: None,
         streamable: true,
+    }
+}
+
+fn dummy_playlist(urn: &str, title: &str) -> PlaylistSummary {
+    PlaylistSummary {
+        urn: urn.to_string(),
+        title: title.to_string(),
+        description: "A saved playlist".to_string(),
+        creator: "Playlist Curator".to_string(),
+        creator_urn: Some("soundcloud:users:1".to_string()),
+        track_count: 12,
+        duration_ms: Some(2_400_000),
+        permalink_url: Some(format!("https://soundcloud.com/tester/sets/{title}")),
+        artwork_url: None,
+        playlist_type: Some("playlist".to_string()),
+        release_year: Some(2024),
+    }
+}
+
+fn dummy_user() -> UserSummary {
+    UserSummary {
+        urn: "soundcloud:users:2".to_string(),
+        username: "Profile User".to_string(),
+        permalink_url: Some("https://soundcloud.com/profile-user".to_string()),
+        avatar_url: None,
+        followers_count: 42_000,
+        track_count: 8,
+        playlist_count: 3,
     }
 }

@@ -1,5 +1,8 @@
 use crate::{
-    config::{credentials::Credentials, tokens::TokenStore},
+    config::{
+        credentials::Credentials, history::RecentlyPlayedStore, settings::Settings,
+        tokens::TokenStore,
+    },
     player::command::PlayerCommand,
     soundcloud::auth::{AuthorizationRequest, AuthorizedSession},
     soundcloud::models::TrackSummary,
@@ -18,6 +21,8 @@ pub enum AppCommand {
         request: AuthorizationRequest,
         callback_input: String,
     },
+    SaveSettings(Settings),
+    SaveHistory(RecentlyPlayedStore),
     LoadFeed {
         session: AuthorizedSession,
         next_href: Option<String>,

@@ -127,7 +127,7 @@ mod tests {
         reduce(&mut state, Action::MoveDown);
 
         assert_eq!(state.selected_playlist, 1);
-        assert_eq!(state.route, Route::Playlist(1));
+        assert_eq!(state.route, Route::Playlist);
     }
 
     #[test]

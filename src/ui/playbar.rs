@@ -35,13 +35,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ]));
     let meta = Paragraph::new(Line::from(format!(
         "{}  |  {}  |  {}",
-        app.now_playing.artist, app.now_playing.context, app.status
+        app.now_playing.artist,
+        app.now_playing.context,
+        app.queue_status_label()
     )));
     let gauge = Gauge::default()
         .ratio(app.now_playing.progress_ratio)
         .label(format!(
-            "{} / {}",
-            app.now_playing.elapsed_label, app.now_playing.duration_label
+            "{} / {}  |  {}",
+            app.now_playing.elapsed_label, app.now_playing.duration_label, app.status
         ));
 
     frame.render_widget(title, rows[0]);
