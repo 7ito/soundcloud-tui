@@ -79,6 +79,10 @@ pub struct AppState {
     search_playlists: CollectionState<SoundcloudPlaylist>,
     search_users: CollectionState<UserSummary>,
     search_view: SearchView,
+    active_user_profile: Option<UserSummary>,
+    user_profile_tracks: CollectionState<TrackSummary>,
+    user_profile_playlists: CollectionState<SoundcloudPlaylist>,
+    user_profile_view: UserProfileView,
     search_cache: HashMap<String, SearchCache>,
     playlists_loading: bool,
     playlists_loaded: bool,
@@ -245,6 +249,13 @@ enum SearchView {
     Tracks,
     Playlists,
     Users,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+enum UserProfileView {
+    #[default]
+    Tracks,
+    Playlists,
 }
 
 #[derive(Debug, Clone)]
@@ -495,6 +506,15 @@ impl SearchView {
     }
 }
 
+impl UserProfileView {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tracks => "Tracks",
+            Self::Playlists => "Playlists",
+        }
+    }
+}
+
 impl SearchCache {
     fn from_state(app: &AppState) -> Self {
         Self {
@@ -651,6 +671,10 @@ impl AppState {
             search_playlists: CollectionState::default(),
             search_users: CollectionState::default(),
             search_view: SearchView::Tracks,
+            active_user_profile: None,
+            user_profile_tracks: CollectionState::default(),
+            user_profile_playlists: CollectionState::default(),
+            user_profile_view: UserProfileView::Tracks,
             search_cache: HashMap::new(),
             playlists_loading: false,
             playlists_loaded: false,
@@ -842,6 +866,61 @@ impl AppState {
                     .or_default()
                     .fail(error.clone());
                 self.show_main_error("Could not load playlist tracks", error);
+            }
+            AppEvent::UserTracksLoaded {
+                session,
+                user_urn,
+                page,
+                append,
+            } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                    return;
+                }
+
+                self.session = Some(session);
+                self.user_profile_tracks.apply_page(page, append);
+                self.status = format!(
+                    "Loaded {} tracks for {}.",
+                    self.user_profile_tracks.items.len(),
+                    self.route_title()
+                );
+            }
+            AppEvent::UserTracksFailed { user_urn, error } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                    return;
+                }
+
+                self.user_profile_tracks.fail(error.clone());
+                self.show_main_error("Could not load user tracks", error);
+            }
+            AppEvent::UserPlaylistsLoaded {
+                session,
+                user_urn,
+                page,
+                append,
+            } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                    return;
+                }
+
+                self.session = Some(session);
+                for playlist in &page.items {
+                    self.remember_playlist(playlist.clone());
+                }
+                self.user_profile_playlists.apply_page(page, append);
+                self.status = format!(
+                    "Loaded {} playlists for {}.",
+                    self.user_profile_playlists.items.len(),
+                    self.route_title()
+                );
+            }
+            AppEvent::UserPlaylistsFailed { user_urn, error } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                    return;
+                }
+
+                self.user_profile_playlists.fail(error.clone());
+                self.show_main_error("Could not load user playlists", error);
             }
             AppEvent::SearchLoaded {
                 session,
@@ -1094,8 +1173,7 @@ impl AppState {
                 state_label: self.following.state_label(),
                 empty_message: "This account is not following anyone yet.".to_string(),
                 help_message: Some(
-                    "Press Enter to open a followed creator profile when SoundCloud provides one."
-                        .to_string(),
+                    "Press Enter to open a followed creator profile in the TUI.".to_string(),
                 ),
             },
             Route::Playlist => {
@@ -1123,6 +1201,65 @@ impl AppState {
                         "Enter plays from this playlist queue. Esc returns to the prior pane."
                             .to_string(),
                     ),
+                }
+            }
+            Route::UserProfile => {
+                let Some(user) = self.active_user_profile.as_ref() else {
+                    return ContentView {
+                        title: "Profile".to_string(),
+                        subtitle: "Select a creator from Following or Search to open a profile."
+                            .to_string(),
+                        columns: ["Title", "Artist", "Access", "Length"],
+                        rows: Vec::new(),
+                        state_label: "Waiting".to_string(),
+                        empty_message: "No creator profile is currently open.".to_string(),
+                        help_message: Some(
+                            "Press 1 for tracks and 2 for playlists once a profile is open."
+                                .to_string(),
+                        ),
+                    };
+                };
+
+                match self.user_profile_view {
+                    UserProfileView::Tracks => ContentView {
+                        title: format!("{} - Tracks", user.username),
+                        subtitle: self.user_profile_subtitle(user),
+                        columns: ["Title", "Artist", "Access", "Length"],
+                        rows: self
+                            .user_profile_tracks
+                            .items
+                            .iter()
+                            .map(track_row_with_access)
+                            .collect(),
+                        state_label: self.user_profile_tracks.state_label(),
+                        empty_message: format!(
+                            "No public tracks are available for {}.",
+                            user.username
+                        ),
+                        help_message: Some(
+                            "1 tracks | 2 playlists | Enter plays the selected track.".to_string(),
+                        ),
+                    },
+                    UserProfileView::Playlists => ContentView {
+                        title: format!("{} - Playlists", user.username),
+                        subtitle: self.user_profile_subtitle(user),
+                        columns: ["Playlist", "Creator", "Tracks", "Year"],
+                        rows: self
+                            .user_profile_playlists
+                            .items
+                            .iter()
+                            .map(playlist_row)
+                            .collect(),
+                        state_label: self.user_profile_playlists.state_label(),
+                        empty_message: format!(
+                            "No public playlists are available for {}.",
+                            user.username
+                        ),
+                        help_message: Some(
+                            "1 tracks | 2 playlists | Enter opens the selected playlist."
+                                .to_string(),
+                        ),
+                    },
                 }
             }
             Route::Search => match self.search_view {
@@ -1322,6 +1459,11 @@ impl AppState {
                         .map(|playlist| playlist.title.clone())
                 })
                 .unwrap_or_else(|| "Playlist".to_string()),
+            Route::UserProfile => self
+                .active_user_profile
+                .as_ref()
+                .map(|user| user.username.clone())
+                .unwrap_or_else(|| "Profile".to_string()),
             _ => self.route.label().to_string(),
         }
     }
@@ -1342,12 +1484,7 @@ impl AppState {
                 self.open_playlist(playlist);
             }
             Some(SelectedContent::User(user)) => {
-                if let Some(url) = user.permalink_url.clone() {
-                    self.queue_command(AppCommand::OpenUrl(url));
-                    self.status = format!("Opening {} in your browser.", user.username);
-                } else {
-                    self.status = format!("No profile URL is available for {}.", user.username);
-                }
+                self.open_user_profile(user);
             }
             None => {
                 let Some(row) = self.current_content_row() else {
@@ -1450,8 +1587,12 @@ impl AppState {
             Route::Search if self.search_view == SearchView::Tracks => {
                 Some((self.search_tracks.items.clone(), self.selected_content))
             }
+            Route::UserProfile if self.user_profile_view == UserProfileView::Tracks => Some((
+                self.user_profile_tracks.items.clone(),
+                self.selected_content,
+            )),
             Route::Search => None,
-            Route::Albums | Route::Following => None,
+            Route::Albums | Route::Following | Route::UserProfile => None,
         }
         .and_then(|(tracks, selected)| {
             if selected < tracks.len() {
@@ -1869,6 +2010,51 @@ impl AppState {
                 self.status = "Loading more playlist tracks...".to_string();
                 true
             }
+            Route::UserProfile => {
+                let Some(user_urn) = self.active_user_profile_urn().map(str::to_string) else {
+                    return false;
+                };
+
+                match self.user_profile_view {
+                    UserProfileView::Tracks => {
+                        if self.user_profile_tracks.loading {
+                            return false;
+                        }
+                        let Some(next_href) = self.user_profile_tracks.next_href.clone() else {
+                            return false;
+                        };
+
+                        self.user_profile_tracks.start_loading(true);
+                        self.queue_command(AppCommand::LoadUserTracks {
+                            session,
+                            user_urn,
+                            next_href: Some(next_href),
+                            append: true,
+                        });
+                        self.status = format!("Loading more tracks for {}...", self.route_title());
+                        true
+                    }
+                    UserProfileView::Playlists => {
+                        if self.user_profile_playlists.loading {
+                            return false;
+                        }
+                        let Some(next_href) = self.user_profile_playlists.next_href.clone() else {
+                            return false;
+                        };
+
+                        self.user_profile_playlists.start_loading(true);
+                        self.queue_command(AppCommand::LoadUserPlaylists {
+                            session,
+                            user_urn,
+                            next_href: Some(next_href),
+                            append: true,
+                        });
+                        self.status =
+                            format!("Loading more playlists for {}...", self.route_title());
+                        true
+                    }
+                }
+            }
             Route::Search => {
                 if self.search_view != SearchView::Tracks {
                     return false;
@@ -2203,6 +2389,17 @@ impl AppState {
                 }
                 KeyCode::Char('3') => {
                     self.set_search_view(SearchView::Users);
+                    true
+                }
+                _ => false,
+            },
+            Route::UserProfile => match key.code {
+                KeyCode::Char('1') => {
+                    self.set_user_profile_view(UserProfileView::Tracks);
+                    true
+                }
+                KeyCode::Char('2') => {
+                    self.set_user_profile_view(UserProfileView::Playlists);
                     true
                 }
                 _ => false,
@@ -2551,6 +2748,51 @@ impl AppState {
                     append,
                 });
             }
+            Route::UserProfile => {
+                let Some(user_urn) = self.active_user_profile_urn().map(str::to_string) else {
+                    self.status = "No creator profile is currently open.".to_string();
+                    return;
+                };
+
+                match self.user_profile_view {
+                    UserProfileView::Tracks => {
+                        if self.user_profile_tracks.loading
+                            || (!append && self.user_profile_tracks.loaded)
+                        {
+                            return;
+                        }
+                        self.user_profile_tracks.start_loading(append);
+                        self.queue_command(AppCommand::LoadUserTracks {
+                            session,
+                            user_urn,
+                            next_href: if append {
+                                self.user_profile_tracks.next_href.clone()
+                            } else {
+                                None
+                            },
+                            append,
+                        });
+                    }
+                    UserProfileView::Playlists => {
+                        if self.user_profile_playlists.loading
+                            || (!append && self.user_profile_playlists.loaded)
+                        {
+                            return;
+                        }
+                        self.user_profile_playlists.start_loading(append);
+                        self.queue_command(AppCommand::LoadUserPlaylists {
+                            session,
+                            user_urn,
+                            next_href: if append {
+                                self.user_profile_playlists.next_href.clone()
+                            } else {
+                                None
+                            },
+                            append,
+                        });
+                    }
+                }
+            }
             Route::Search => {
                 if self.search_query.trim().is_empty() {
                     self.status = "Enter a search query first.".to_string();
@@ -2598,6 +2840,10 @@ impl AppState {
         self.search_playlists = CollectionState::default();
         self.search_users = CollectionState::default();
         self.search_view = SearchView::Tracks;
+        self.active_user_profile = None;
+        self.user_profile_tracks = CollectionState::default();
+        self.user_profile_playlists = CollectionState::default();
+        self.user_profile_view = UserProfileView::Tracks;
         self.search_cache.clear();
         self.selected_playlist = 0;
         self.selected_content = 0;
@@ -2697,6 +2943,21 @@ impl AppState {
         self.status = format!("Opened playlist {}.", playlist.title);
     }
 
+    fn open_user_profile(&mut self, user: UserSummary) {
+        self.active_user_profile = Some(user.clone());
+        self.user_profile_tracks = CollectionState::default();
+        self.user_profile_playlists = CollectionState::default();
+        self.user_profile_view = UserProfileView::Tracks;
+        self.set_route(Route::UserProfile);
+        self.status = format!("Opened {}'s profile.", user.username);
+    }
+
+    fn active_user_profile_urn(&self) -> Option<&str> {
+        self.active_user_profile
+            .as_ref()
+            .map(|user| user.urn.as_str())
+    }
+
     fn recent_history_state_label(&self) -> String {
         if self.recent_history.entries.is_empty() {
             "Empty".to_string()
@@ -2741,6 +3002,36 @@ impl AppState {
         self.search_view = search_view;
         self.selected_content = 0;
         self.status = format!("Showing {} search results.", search_view.label());
+    }
+
+    fn set_user_profile_view(&mut self, user_profile_view: UserProfileView) {
+        if self.user_profile_view == user_profile_view {
+            return;
+        }
+
+        self.user_profile_view = user_profile_view;
+        self.selected_content = 0;
+        self.status = format!(
+            "Showing {} for {}.",
+            self.user_profile_view.label(),
+            self.route_title()
+        );
+        self.request_route_load(false);
+    }
+
+    fn user_profile_subtitle(&self, user: &UserSummary) -> String {
+        let mut segments = vec![
+            format!("Followers {}", user.followers_label()),
+            format!("{} tracks", user.track_count),
+            format!("{} playlists", user.playlist_count),
+            format!("Showing {}", self.user_profile_view.label()),
+        ];
+
+        if let Some(permalink) = user.permalink_url.as_deref() {
+            segments.push(permalink.to_string());
+        }
+
+        segments.join(" | ")
     }
 
     fn cache_search_results(&mut self) {
@@ -2857,6 +3148,14 @@ impl AppState {
                 };
                 self.playlist_tracks.insert(urn, CollectionState::default());
             }
+            Route::UserProfile => {
+                if self.active_user_profile.is_none() {
+                    self.status = "No creator profile is currently open.".to_string();
+                    return;
+                }
+                self.user_profile_tracks = CollectionState::default();
+                self.user_profile_playlists = CollectionState::default();
+            }
             Route::Search => {
                 self.search_cache.remove(&self.search_query);
                 self.search_tracks = CollectionState::default();
@@ -2946,6 +3245,24 @@ impl AppState {
                     context: self.route_title(),
                     track,
                 }),
+            Route::UserProfile => match self.user_profile_view {
+                UserProfileView::Tracks => {
+                    self.user_profile_tracks
+                        .items
+                        .get(index)
+                        .cloned()
+                        .map(|track| SelectedContent::Track {
+                            context: self.route_title(),
+                            track,
+                        })
+                }
+                UserProfileView::Playlists => self
+                    .user_profile_playlists
+                    .items
+                    .get(index)
+                    .cloned()
+                    .map(SelectedContent::Playlist),
+            },
             Route::Search => match self.search_view {
                 SearchView::Tracks => self.search_tracks.items.get(index).cloned().map(|track| {
                     SelectedContent::Track {
@@ -3122,6 +3439,16 @@ impl AppState {
                     help_message: Some("Mock playlist browsing preview.".to_string()),
                 }
             }
+            Route::UserProfile => ContentView {
+                title: "Profile".to_string(),
+                subtitle: "Creator stats and releases will appear here after authentication."
+                    .to_string(),
+                columns: ["Title", "Artist", "Access", "Length"],
+                rows: Vec::new(),
+                state_label: "Mock data".to_string(),
+                empty_message: "No mock creator profile is available.".to_string(),
+                help_message: Some("Press Enter on a creator to open their profile.".to_string()),
+            },
             Route::Search => ContentView {
                 title: self.search_title(),
                 subtitle: format!(
@@ -3261,11 +3588,7 @@ fn user_row(user: &UserSummary) -> ContentRow {
             user.username.clone(),
             user.followers_label(),
             user.spotlight_label(),
-            if user.permalink_url.is_some() {
-                "Profile".to_string()
-            } else {
-                "--".to_string()
-            },
+            "Profile".to_string(),
         ],
     }
 }

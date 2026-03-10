@@ -1,29 +1,70 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    text::Line,
+    style::Style,
+    text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState, Wrap},
 };
 
 use crate::{
     app::{AppState, Focus, Route},
-    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+    ui::{
+        theme::Theme,
+        widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+    },
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let view = app.current_content();
     let block = pane_block(view.title.as_str(), app.focus == Focus::Content);
     let inner = block.inner(area);
+    let visible_columns = visible_column_indices(app.route);
 
     frame.render_widget(block, area);
 
-    let content_area = if app.route == Route::Search {
+    let summary_lines = if matches!(app.route, Route::Search | Route::UserProfile) {
+        let mut lines = Vec::new();
+
+        if !view.subtitle.trim().is_empty() {
+            lines.push(Line::from(view.subtitle.clone()));
+        }
+
+        let mut meta = Vec::new();
+        if !view.state_label.trim().is_empty() {
+            meta.push(Span::styled(view.state_label.clone(), header_style()));
+        }
+        if let Some(help_message) = view
+            .help_message
+            .as_ref()
+            .filter(|message| !message.trim().is_empty())
+        {
+            if !meta.is_empty() {
+                meta.push(Span::raw(" | "));
+            }
+            meta.push(Span::styled(
+                help_message.clone(),
+                Style::default().fg(Theme::default().muted),
+            ));
+        }
+        if !meta.is_empty() {
+            lines.push(Line::from(meta));
+        }
+
+        lines
+    } else {
+        Vec::new()
+    };
+
+    let content_area = if !summary_lines.is_empty() {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Length(summary_lines.len() as u16),
+                Constraint::Min(1),
+            ])
             .split(inner);
 
-        let summary = Paragraph::new(Line::from(view.subtitle.clone())).wrap(Wrap { trim: true });
+        let summary = Paragraph::new(summary_lines).wrap(Wrap { trim: true });
         frame.render_widget(summary, chunks[0]);
         chunks[1]
     } else {
@@ -36,30 +77,73 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     } else {
         let rows = view.rows.iter().map(|row| {
             Row::new(
-                row.columns
+                visible_columns
                     .iter()
-                    .cloned()
+                    .map(|&index| row.columns[index].clone())
                     .map(Cell::from)
                     .collect::<Vec<_>>(),
             )
         });
-        let header = Row::new(view.columns.map(Cell::from)).style(header_style());
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Percentage(30),
-                Constraint::Percentage(26),
-                Constraint::Percentage(30),
-                Constraint::Percentage(14),
-            ],
+        let header = Row::new(
+            visible_columns
+                .iter()
+                .map(|&index| view.columns[index])
+                .map(Cell::from)
+                .collect::<Vec<_>>(),
         )
-        .header(header)
-        .row_highlight_style(selected_row_style())
-        .column_spacing(1)
-        .highlight_symbol(HIGHLIGHT_SYMBOL);
+        .style(header_style());
+        let table = Table::new(rows, column_constraints(visible_columns))
+            .header(header)
+            .row_highlight_style(selected_row_style())
+            .column_spacing(1)
+            .highlight_symbol(HIGHLIGHT_SYMBOL);
 
         let mut state = TableState::default();
         state.select(Some(app.selected_content.min(view.rows.len() - 1)));
         frame.render_stateful_widget(table, content_area, &mut state);
+    }
+}
+
+fn visible_column_indices(route: Route) -> &'static [usize] {
+    match route {
+        Route::Feed | Route::LikedSongs => &[0, 1, 3],
+        _ => &[0, 1, 2, 3],
+    }
+}
+
+fn column_constraints(visible_columns: &[usize]) -> Vec<Constraint> {
+    match visible_columns.len() {
+        3 => vec![
+            Constraint::Percentage(60),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+        ],
+        _ => vec![
+            Constraint::Percentage(30),
+            Constraint::Percentage(26),
+            Constraint::Percentage(30),
+            Constraint::Percentage(14),
+        ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_column_indices;
+    use crate::app::Route;
+
+    #[test]
+    fn feed_hides_source_column() {
+        assert_eq!(visible_column_indices(Route::Feed), &[0, 1, 3]);
+    }
+
+    #[test]
+    fn liked_songs_hides_access_column() {
+        assert_eq!(visible_column_indices(Route::LikedSongs), &[0, 1, 3]);
+    }
+
+    #[test]
+    fn other_routes_keep_all_columns() {
+        assert_eq!(visible_column_indices(Route::Playlist), &[0, 1, 2, 3]);
     }
 }

@@ -48,6 +48,7 @@ pub enum Route {
     Albums,
     Following,
     Playlist,
+    UserProfile,
     Search,
 }
 
@@ -60,6 +61,7 @@ impl Route {
             Self::Albums => "Albums",
             Self::Following => "Following",
             Self::Playlist => "Playlist",
+            Self::UserProfile => "Profile",
             Self::Search => "Search",
         }
     }

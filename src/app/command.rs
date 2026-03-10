@@ -54,6 +54,18 @@ pub enum AppCommand {
         next_href: Option<String>,
         append: bool,
     },
+    LoadUserTracks {
+        session: AuthorizedSession,
+        user_urn: String,
+        next_href: Option<String>,
+        append: bool,
+    },
+    LoadUserPlaylists {
+        session: AuthorizedSession,
+        user_urn: String,
+        next_href: Option<String>,
+        append: bool,
+    },
     SearchAll {
         session: AuthorizedSession,
         query: String,

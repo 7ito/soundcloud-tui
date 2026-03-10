@@ -234,6 +234,48 @@ impl SoundcloudService {
         .await
     }
 
+    pub async fn load_user_tracks(
+        &self,
+        access_token: &str,
+        user_urn: &str,
+        next_href: Option<&str>,
+    ) -> Result<Page<TrackSummary>> {
+        let path = format!("/users/{user_urn}/tracks");
+
+        self.fetch_track_page(
+            access_token,
+            next_href,
+            path.as_str(),
+            &[
+                ("limit", PAGE_SIZE.to_string()),
+                ("linked_partitioning", "true".to_string()),
+                ("access", ACCESS_ALL.to_string()),
+            ],
+        )
+        .await
+    }
+
+    pub async fn load_user_playlists(
+        &self,
+        access_token: &str,
+        user_urn: &str,
+        next_href: Option<&str>,
+    ) -> Result<Page<PlaylistSummary>> {
+        let path = format!("/users/{user_urn}/playlists");
+
+        self.fetch_playlist_page(
+            access_token,
+            next_href,
+            path.as_str(),
+            &[
+                ("limit", PAGE_SIZE.to_string()),
+                ("linked_partitioning", "true".to_string()),
+                ("show_tracks", "false".to_string()),
+            ],
+        )
+        .await
+    }
+
     pub async fn search_all(&self, access_token: &str, query: &str) -> Result<SearchResults> {
         let (tracks, playlists, users) = tokio::try_join!(
             self.search_tracks(access_token, query, None),

@@ -65,6 +65,26 @@ pub enum AppEvent {
         playlist_urn: String,
         error: String,
     },
+    UserTracksLoaded {
+        session: AuthorizedSession,
+        user_urn: String,
+        page: Page<TrackSummary>,
+        append: bool,
+    },
+    UserTracksFailed {
+        user_urn: String,
+        error: String,
+    },
+    UserPlaylistsLoaded {
+        session: AuthorizedSession,
+        user_urn: String,
+        page: Page<PlaylistSummary>,
+        append: bool,
+    },
+    UserPlaylistsFailed {
+        user_urn: String,
+        error: String,
+    },
     SearchLoaded {
         session: AuthorizedSession,
         query: String,

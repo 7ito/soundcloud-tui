@@ -351,6 +351,74 @@ fn run_command(
                 });
             });
         }
+        AppCommand::LoadUserTracks {
+            session,
+            user_urn,
+            next_href,
+            append,
+        } => {
+            tokio::spawn(async move {
+                let failed_user_urn = user_urn.clone();
+                let result =
+                    execute_session_command(paths, session, move |service, session| async move {
+                        let page = service
+                            .load_user_tracks(
+                                &session.tokens.access_token,
+                                &user_urn,
+                                next_href.as_deref(),
+                            )
+                            .await?;
+                        Ok(AppEvent::UserTracksLoaded {
+                            session,
+                            user_urn,
+                            page,
+                            append,
+                        })
+                    })
+                    .await;
+                let _ = sender.send(match result {
+                    Ok(event) => event,
+                    Err(error) => AppEvent::UserTracksFailed {
+                        user_urn: failed_user_urn,
+                        error: error.to_string(),
+                    },
+                });
+            });
+        }
+        AppCommand::LoadUserPlaylists {
+            session,
+            user_urn,
+            next_href,
+            append,
+        } => {
+            tokio::spawn(async move {
+                let failed_user_urn = user_urn.clone();
+                let result =
+                    execute_session_command(paths, session, move |service, session| async move {
+                        let page = service
+                            .load_user_playlists(
+                                &session.tokens.access_token,
+                                &user_urn,
+                                next_href.as_deref(),
+                            )
+                            .await?;
+                        Ok(AppEvent::UserPlaylistsLoaded {
+                            session,
+                            user_urn,
+                            page,
+                            append,
+                        })
+                    })
+                    .await;
+                let _ = sender.send(match result {
+                    Ok(event) => event,
+                    Err(error) => AppEvent::UserPlaylistsFailed {
+                        user_urn: failed_user_urn,
+                        error: error.to_string(),
+                    },
+                });
+            });
+        }
         AppCommand::SearchAll { session, query } => {
             tokio::spawn(async move {
                 let query_for_error = query.clone();
@@ -568,7 +636,9 @@ fn run_linux_clipboard_command(
             .map_err(|error| format!("{program}: failed writing stdin: {error}"))?;
     }
 
-    let status = child.wait().map_err(|error| format!("{program}: {error}"))?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("{program}: {error}"))?;
 
     if status.success() {
         Ok(())

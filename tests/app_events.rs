@@ -619,6 +619,70 @@ fn selecting_album_opens_playlist_detail_route() {
     }
 }
 
+#[test]
+fn selecting_user_opens_profile_route_and_queues_track_load() {
+    let mut app = AppState::new();
+    let user = dummy_user();
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::FollowingLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![user.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+
+    app.set_route(Route::Following);
+    while app.take_pending_command().is_some() {}
+
+    app.select_current_content();
+
+    assert_eq!(app.route, Route::UserProfile);
+    assert_eq!(app.route_title(), user.username);
+    assert_eq!(app.current_content().columns[0], "Title");
+
+    match app.take_pending_command() {
+        Some(AppCommand::LoadUserTracks { user_urn, .. }) => assert_eq!(user_urn, user.urn),
+        other => panic!("expected LoadUserTracks command, got {other:?}"),
+    }
+}
+
+#[test]
+fn user_profile_shortcuts_switch_to_playlists_and_queue_load() {
+    let mut app = AppState::new();
+    let user = dummy_user();
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::FollowingLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![user.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+
+    app.set_route(Route::Following);
+    while app.take_pending_command().is_some() {}
+    app.select_current_content();
+    while app.take_pending_command().is_some() {}
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.route, Route::UserProfile);
+    assert_eq!(app.current_content().columns[0], "Playlist");
+
+    match app.take_pending_command() {
+        Some(AppCommand::LoadUserPlaylists { user_urn, .. }) => assert_eq!(user_urn, user.urn),
+        other => panic!("expected LoadUserPlaylists command, got {other:?}"),
+    }
+}
+
 fn dummy_session() -> AuthorizedSession {
     AuthorizedSession {
         profile: AuthSession {
