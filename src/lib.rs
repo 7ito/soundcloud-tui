@@ -3,6 +3,7 @@ pub mod config;
 pub mod input;
 pub mod integrations;
 pub mod player;
+pub mod runtime;
 pub mod soundcloud;
 pub mod ui;
 pub mod util;
