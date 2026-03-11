@@ -39,11 +39,19 @@ struct ApiPage<T> {
 
 impl<T> ApiPage<T> {
     fn into_page<U>(self, mut map: impl FnMut(T) -> U) -> Page<U> {
+        let item_count = self.collection.len();
         Page {
             items: self.collection.into_iter().map(&mut map).collect(),
-            next_href: self.next_href,
+            next_href: normalize_next_href(self.next_href, item_count),
         }
     }
+}
+
+fn normalize_next_href(next_href: Option<String>, item_count: usize) -> Option<String> {
+    next_href
+        .map(|href| href.trim().to_string())
+        .filter(|href| !href.is_empty())
+        .filter(|_| item_count >= PAGE_SIZE)
 }
 
 #[derive(Debug, Deserialize)]
@@ -666,6 +674,32 @@ fn soundcloud_identifier_from_value(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_pages_do_not_keep_next_href() {
+        assert_eq!(
+            normalize_next_href(
+                Some("https://api.soundcloud.com/next".to_string()),
+                PAGE_SIZE - 1
+            ),
+            None
+        );
+        assert_eq!(
+            normalize_next_href(Some("   ".to_string()), PAGE_SIZE),
+            None
+        );
+    }
+
+    #[test]
+    fn full_pages_keep_non_empty_next_href() {
+        assert_eq!(
+            normalize_next_href(
+                Some("  https://api.soundcloud.com/next  ".to_string()),
+                PAGE_SIZE
+            ),
+            Some("https://api.soundcloud.com/next".to_string())
+        );
+    }
 
     #[test]
     fn playlist_update_id_payload_uses_string_identifiers() {

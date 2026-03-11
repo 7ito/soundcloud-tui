@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::{
     app::{
-        reducer, Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus,
-        PlaybackIntent, RepeatMode, Route, SettingsMenuState,
+        Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
+        RepeatMode, Route, SettingsMenuState, reducer,
     },
     config::{
         credentials::Credentials,
@@ -375,6 +375,10 @@ impl<T> CollectionState<T> {
     }
 
     fn state_label(&self) -> String {
+        self.state_label_with_more_available(true)
+    }
+
+    fn state_label_with_more_available(&self, show_more_available: bool) -> String {
         if self.loading {
             "Loading".to_string()
         } else if self.error.is_some() {
@@ -382,7 +386,7 @@ impl<T> CollectionState<T> {
         } else if self.loaded {
             if self.items.is_empty() {
                 "Empty".to_string()
-            } else if self.next_href.is_some() {
+            } else if show_more_available && self.next_href.is_some() {
                 format!("Loaded {} items (more available)", self.items.len())
             } else {
                 format!("Loaded {} items", self.items.len())
@@ -427,6 +431,28 @@ include!("events.rs");
 include!("content.rs");
 include!("playback.rs");
 include!("loading.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::CollectionState;
+
+    #[test]
+    fn state_label_hides_more_available_when_disabled() {
+        let state = CollectionState {
+            items: vec![1, 2, 3],
+            next_href: Some("https://api.soundcloud.com/next".to_string()),
+            loading: false,
+            error: None,
+            loaded: true,
+        };
+
+        assert_eq!(state.state_label(), "Loaded 3 items (more available)");
+        assert_eq!(
+            state.state_label_with_more_available(false),
+            "Loaded 3 items"
+        );
+    }
+}
 include!("interaction.rs");
 
 fn mock_playlists() -> Vec<SidebarPlaylist> {

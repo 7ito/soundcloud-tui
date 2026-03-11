@@ -59,6 +59,23 @@ pub struct ErrorLayout {
 pub const SETTINGS_TAB_LEFT_PADDING: &str = " ";
 pub const SETTINGS_TAB_RIGHT_PADDING: &str = " ";
 pub const SETTINGS_TAB_DIVIDER: &str = "|";
+const HEADER_COMPONENT_SPACING: u16 = 0;
+
+fn wide_header_constraints() -> [Constraint; 3] {
+    [
+        Constraint::Min(1),
+        Constraint::Length(14),
+        Constraint::Length(18),
+    ]
+}
+
+fn compact_header_constraints() -> [Constraint; 3] {
+    [
+        Constraint::Ratio(11, 20),
+        Constraint::Ratio(3, 20),
+        Constraint::Ratio(6, 20),
+    ]
+}
 
 pub fn viewport_area(app: &AppState) -> Option<Rect> {
     if app.viewport.width == 0 || app.viewport.height == 0 {
@@ -130,12 +147,8 @@ pub fn main_layout(frame: Rect, app: &AppState) -> MainLayout {
     let (search, help, settings, library, playlists) = if let Some(header_area) = header {
         let header_sections = Layout::default()
             .direction(Direction::Horizontal)
-            .spacing(1)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(14),
-                Constraint::Length(18),
-            ])
+            .spacing(HEADER_COMPONENT_SPACING)
+            .constraints(wide_header_constraints())
             .split(header_area);
         (
             header_sections[0],
@@ -147,12 +160,8 @@ pub fn main_layout(frame: Rect, app: &AppState) -> MainLayout {
     } else {
         let sidebar_header = Layout::default()
             .direction(Direction::Horizontal)
-            .spacing(1)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(6),
-                Constraint::Length(8),
-            ])
+            .spacing(HEADER_COMPONENT_SPACING)
+            .constraints(compact_header_constraints())
             .split(sidebar[0]);
         (
             sidebar_header[0],
@@ -418,5 +427,34 @@ mod tests {
             settings_tab_at(Rect::new(0, 0, 40, 3), 3, 1),
             Some(SettingsTab::Behavior)
         );
+    }
+
+    #[test]
+    fn wide_header_split_uses_original_fixed_widths() {
+        assert_eq!(
+            wide_header_constraints(),
+            [
+                Constraint::Min(1),
+                Constraint::Length(14),
+                Constraint::Length(18)
+            ]
+        );
+    }
+
+    #[test]
+    fn compact_header_split_uses_fifty_five_fifteen_thirty_ratio() {
+        assert_eq!(
+            compact_header_constraints(),
+            [
+                Constraint::Ratio(11, 20),
+                Constraint::Ratio(3, 20),
+                Constraint::Ratio(6, 20)
+            ]
+        );
+    }
+
+    #[test]
+    fn header_components_have_no_spacing_between_them() {
+        assert_eq!(HEADER_COMPONENT_SPACING, 0);
     }
 }

@@ -16,19 +16,18 @@ use crate::{
     },
 };
 
-const CONTROLS: [&str; 11] = [
+const CONTROLS: [&str; 8] = [
     "[Prev]",
     "[Play/Pause]",
     "[Next]",
-    "[Q Queue]",
-    "[z Add]",
     "[Shuffle]",
     "[Repeat]",
-    "[W Playlist]",
-    "[L Like]",
+    "[Like]",
     "[Vol-]",
     "[Vol+]",
 ];
+
+const MIN_META_WIDTH_WITH_ART: u16 = 28;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut CoverArtRenderer) {
     let title = playbar_title(app);
@@ -53,7 +52,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
 
     let show_cover_art = should_draw_cover_art(app, cover_art) && inner.width >= 32;
     let meta_area = if show_cover_art {
-        let art_width = (inner.height.saturating_mul(2)).clamp(8, inner.width.saturating_sub(12));
+        let art_width = cover_art_width(inner);
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(art_width), Constraint::Min(1)])
@@ -64,16 +63,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
     } else {
         inner
     };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(meta_area);
+    let rows = anchored_rows(meta_area);
 
     let title = Paragraph::new(Line::from(Span::styled(
         app.now_playing.title.as_str(),
@@ -97,24 +87,56 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
 
     frame.render_widget(title, rows[0]);
     frame.render_widget(artist, rows[1]);
-    frame.render_widget(controls, rows[2]);
-    frame.render_widget(progress, rows[3]);
+    frame.render_widget(controls, rows[3]);
+    frame.render_widget(progress, rows[4]);
 
     render_toast(frame, meta_area, app);
 }
 
 fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let compact = Paragraph::new(vec![
-        Line::from(Span::styled(
-            app.now_playing.title.as_str(),
-            header_style(app),
-        )),
-        Line::from(progress_label(app)),
-    ])
+    let rows = compact_rows(area);
+    let title = Paragraph::new(Line::from(Span::styled(
+        app.now_playing.title.as_str(),
+        header_style(app),
+    )))
     .style(Style::default().fg(app.theme().text))
     .wrap(Wrap { trim: true });
+    let progress = Paragraph::new(Line::from(progress_label(app)))
+        .style(Style::default().fg(app.theme().text))
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
 
-    frame.render_widget(compact, area);
+    frame.render_widget(title, rows[0]);
+    frame.render_widget(progress, rows[2]);
+}
+
+fn cover_art_width(area: Rect) -> u16 {
+    let max_art_width = area.width.saturating_sub(MIN_META_WIDTH_WITH_ART).max(8);
+    area.height.saturating_mul(2).clamp(8, max_art_width)
+}
+
+fn anchored_rows(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(area)
+}
+
+fn compact_rows(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area)
 }
 
 fn render_cover_art(
@@ -226,4 +248,37 @@ fn format_seconds_f64(seconds: f64) -> String {
     let minutes = seconds / 60;
     let remainder = seconds % 60;
     format!("{minutes}:{remainder:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{anchored_rows, compact_rows, cover_art_width};
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn anchored_rows_keep_metadata_top_and_controls_bottom() {
+        let area = Rect::new(2, 4, 30, 8);
+        let rows = anchored_rows(area);
+
+        assert_eq!(rows[0], Rect::new(2, 4, 30, 1));
+        assert_eq!(rows[1], Rect::new(2, 5, 30, 1));
+        assert_eq!(rows[3], Rect::new(2, 10, 30, 1));
+        assert_eq!(rows[4], Rect::new(2, 11, 30, 1));
+    }
+
+    #[test]
+    fn compact_rows_keep_progress_at_bottom() {
+        let area = Rect::new(0, 0, 20, 3);
+        let rows = compact_rows(area);
+
+        assert_eq!(rows[0], Rect::new(0, 0, 20, 1));
+        assert_eq!(rows[2], Rect::new(0, 2, 20, 1));
+    }
+
+    #[test]
+    fn cover_art_width_scales_with_height_until_metadata_minimum() {
+        assert_eq!(cover_art_width(Rect::new(0, 0, 60, 6)), 12);
+        assert_eq!(cover_art_width(Rect::new(0, 0, 60, 12)), 24);
+        assert_eq!(cover_art_width(Rect::new(0, 0, 40, 20)), 12);
+    }
 }

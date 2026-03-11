@@ -76,7 +76,7 @@ impl CoverArtRenderer {
         };
 
         frame.render_stateful_widget(
-            StatefulImage::default().resize(Resize::Fit(None)),
+            StatefulImage::default().resize(Resize::Scale(None)),
             area,
             &mut state.image,
         );

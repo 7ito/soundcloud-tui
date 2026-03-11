@@ -649,6 +649,82 @@ fn search_result_shortcuts_switch_between_tables() {
 }
 
 #[test]
+fn search_tracks_show_more_available_when_next_page_exists() {
+    let mut app = AppState::new();
+    app.session = Some(dummy_session());
+    app.search_query = "night".to_string();
+    app.search_cursor = 5;
+    app.set_route(Route::Search);
+    drain_pending_commands(&mut app);
+
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        query: "night".to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: vec![dummy_track("soundcloud:tracks:9", "Night Track")],
+                next_href: Some("https://api.soundcloud.com/next".to_string()),
+            },
+            playlists: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+            users: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+        },
+    });
+
+    assert_eq!(
+        app.current_content().state_label,
+        "Loaded 1 items (more available)"
+    );
+}
+
+#[test]
+fn search_playlist_and_user_snapshots_hide_more_available_label() {
+    let mut app = AppState::new();
+    let playlist = dummy_playlist("soundcloud:playlists:1", "Night Drive");
+    app.session = Some(dummy_session());
+    app.search_query = "night".to_string();
+    app.search_cursor = 5;
+    app.set_route(Route::Search);
+    drain_pending_commands(&mut app);
+
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        query: "night".to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+            playlists: Page {
+                items: vec![playlist],
+                next_href: Some("https://api.soundcloud.com/next".to_string()),
+            },
+            users: Page {
+                items: vec![dummy_user()],
+                next_href: Some("https://api.soundcloud.com/next-users".to_string()),
+            },
+        },
+    });
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.current_content().state_label, "Loaded 1 items");
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('3'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.current_content().state_label, "Loaded 1 items");
+}
+
+#[test]
 fn slash_enters_search_and_enter_submits_typed_query() {
     let mut app = AppState::new();
 

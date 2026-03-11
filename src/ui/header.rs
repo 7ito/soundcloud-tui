@@ -55,21 +55,23 @@ pub fn render_help(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 }
 
 pub fn render_settings(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let label = if area.width < 14 {
-        app.settings()
-            .keybinding(KeyAction::OpenSettings)
-            .to_string()
-    } else {
-        format!(
-            "Type {}",
-            app.settings().keybinding(KeyAction::OpenSettings)
-        )
-    };
+    let label = settings_label(
+        area.width,
+        app.settings().keybinding(KeyAction::OpenSettings),
+    );
     let settings = Paragraph::new(label)
         .alignment(Alignment::Left)
         .block(pane_block("Settings", app.show_settings(), app));
 
     frame.render_widget(settings, area);
+}
+
+fn settings_label(width: u16, binding: &str) -> String {
+    if width < 14 {
+        "Open".to_string()
+    } else {
+        format!("Type {binding}")
+    }
 }
 
 fn visible_search_query(query: &str, cursor: usize, width: usize) -> (usize, String) {
@@ -93,12 +95,18 @@ fn visible_search_query(query: &str, cursor: usize, width: usize) -> (usize, Str
 
 #[cfg(test)]
 mod tests {
-    use super::visible_search_query;
+    use super::{settings_label, visible_search_query};
 
     #[test]
     fn long_queries_scroll_with_cursor() {
         let (offset, visible) = visible_search_query("abcdefghijklmnop", 12, 6);
         assert_eq!(offset, 7);
         assert_eq!(visible, "hijklm");
+    }
+
+    #[test]
+    fn narrow_settings_button_uses_open_label() {
+        assert_eq!(settings_label(13, "alt-,"), "Open");
+        assert_eq!(settings_label(14, "alt-,"), "Type alt-,");
     }
 }

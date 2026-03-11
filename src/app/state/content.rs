@@ -227,7 +227,7 @@ impl AppState {
                         .iter()
                         .map(playlist_row)
                         .collect(),
-                    state_label: self.search_playlists.state_label(),
+                    state_label: self.search_playlists.state_label_with_more_available(false),
                     empty_message: "No matching playlists were found.".to_string(),
                     help_message: Some(self.search_help_message()),
                 },
@@ -236,7 +236,7 @@ impl AppState {
                     subtitle: self.search_subtitle(),
                     columns: ["Creator", "Followers", "Catalog", "Profile"],
                     rows: self.search_users.items.iter().map(user_row).collect(),
-                    state_label: self.search_users.state_label(),
+                    state_label: self.search_users.state_label_with_more_available(false),
                     empty_message: "No matching creators were found.".to_string(),
                     help_message: Some(self.search_help_message()),
                 },
