@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use crate::{
     app::{
         Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
-        RepeatMode, Route, SettingsMenuState, SettingsTab, reducer,
+        RepeatMode, Route, SettingsMenuState, reducer,
     },
     config::{
         credentials::Credentials,
@@ -2838,10 +2838,8 @@ impl AppState {
 
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             if rect_contains(layout.tabs, mouse.column, mouse.row) {
-                if let Some(index) = geometry::settings_tab_index(layout.tabs, mouse.column) {
-                    if let Some(tab) = SettingsTab::ALL.get(index).copied() {
-                        menu.select_tab(tab);
-                    }
+                if let Some(tab) = geometry::settings_tab_at(layout.tabs, mouse.column, mouse.row) {
+                    menu.select_tab(tab);
                 }
             } else if rect_contains(layout.list, mouse.column, mouse.row) {
                 let items = menu.items();

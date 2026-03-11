@@ -56,6 +56,10 @@ pub struct ErrorLayout {
     pub body: Rect,
 }
 
+pub const SETTINGS_TAB_LEFT_PADDING: &str = " ";
+pub const SETTINGS_TAB_RIGHT_PADDING: &str = " ";
+pub const SETTINGS_TAB_DIVIDER: &str = "|";
+
 pub fn viewport_area(app: &AppState) -> Option<Rect> {
     if app.viewport.width == 0 || app.viewport.height == 0 {
         return None;
@@ -290,18 +294,68 @@ pub fn error_layout(area: Rect) -> ErrorLayout {
     }
 }
 
-pub fn settings_tab_index(area: Rect, column: u16) -> Option<usize> {
-    if area.width == 0 {
-        return None;
-    }
-
+pub fn settings_tab_regions(area: Rect) -> Vec<(SettingsTab, Rect)> {
     let inner = pane_inner(area);
-    if inner.width == 0 || column < inner.x || column >= inner.x.saturating_add(inner.width) {
-        return None;
+    if inner.width == 0 {
+        return Vec::new();
     }
 
-    let relative = column.saturating_sub(inner.x) as usize;
-    Some((relative * SettingsTab::ALL.len()) / inner.width as usize)
+    let mut x = inner.left();
+    let right = inner.right();
+    let mut regions = Vec::with_capacity(SettingsTab::ALL.len());
+
+    for (index, tab) in SettingsTab::ALL.iter().copied().enumerate() {
+        let last_tab = index + 1 == SettingsTab::ALL.len();
+        let start = x;
+
+        let remaining_width = right.saturating_sub(x);
+        if remaining_width == 0 {
+            break;
+        }
+        x = x.saturating_add(
+            SETTINGS_TAB_LEFT_PADDING
+                .len()
+                .min(remaining_width as usize) as u16,
+        );
+
+        let remaining_width = right.saturating_sub(x);
+        if remaining_width == 0 {
+            break;
+        }
+        x = x.saturating_add(tab.label().chars().count().min(remaining_width as usize) as u16);
+
+        let remaining_width = right.saturating_sub(x);
+        if remaining_width == 0 {
+            regions.push((tab, Rect::new(start, inner.y, x.saturating_sub(start), 1)));
+            break;
+        }
+        x = x.saturating_add(
+            SETTINGS_TAB_RIGHT_PADDING
+                .len()
+                .min(remaining_width as usize) as u16,
+        );
+        regions.push((tab, Rect::new(start, inner.y, x.saturating_sub(start), 1)));
+
+        let remaining_width = right.saturating_sub(x);
+        if remaining_width == 0 || last_tab {
+            break;
+        }
+        x = x.saturating_add(SETTINGS_TAB_DIVIDER.len().min(remaining_width as usize) as u16);
+    }
+
+    regions
+}
+
+pub fn settings_tab_at(area: Rect, column: u16, row: u16) -> Option<SettingsTab> {
+    settings_tab_regions(area)
+        .into_iter()
+        .find_map(|(tab, rect)| {
+            (column >= rect.x
+                && column < rect.x.saturating_add(rect.width)
+                && row >= rect.y
+                && row < rect.y.saturating_add(rect.height))
+            .then_some(tab)
+        })
 }
 
 fn centered_rect(area: Rect, margin: u16, max_width: u16, max_height: u16) -> Rect {
@@ -358,7 +412,11 @@ mod tests {
 
     #[test]
     fn settings_tabs_map_across_inner_width() {
-        let index = settings_tab_index(Rect::new(0, 0, 30, 3), 10).expect("tab index");
-        assert!(index < SettingsTab::ALL.len());
+        let regions = settings_tab_regions(Rect::new(0, 0, 40, 3));
+        assert_eq!(regions.len(), SettingsTab::ALL.len());
+        assert_eq!(
+            settings_tab_at(Rect::new(0, 0, 40, 3), 3, 1),
+            Some(SettingsTab::Behavior)
+        );
     }
 }

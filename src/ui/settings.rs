@@ -36,6 +36,11 @@ fn render_tabs(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .select(menu.tab.index())
+        .divider(geometry::SETTINGS_TAB_DIVIDER)
+        .padding(
+            geometry::SETTINGS_TAB_LEFT_PADDING,
+            geometry::SETTINGS_TAB_RIGHT_PADDING,
+        )
         .block(pane_block("Settings (←/→ to switch tabs)", true, app))
         .highlight_style(header_style(app))
         .style(Style::default().fg(app.theme().text));

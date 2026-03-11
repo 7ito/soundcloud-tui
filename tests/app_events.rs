@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use soundcloud_tui::{
-    app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Focus, Route},
+    app::{
+        AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Focus, Route, SettingsTab,
+    },
     config::{
         credentials::Credentials,
         history::{RecentlyPlayedEntry, RecentlyPlayedStore},
@@ -119,6 +121,36 @@ fn mouse_click_selected_settings_row_starts_editing() {
     app.dispatch_event(AppEvent::Mouse(left_click(list.x, list.y)));
 
     assert!(app.settings_menu.as_ref().expect("settings open").editing);
+}
+
+#[test]
+fn mouse_click_settings_tab_switches_visible_tab() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(
+        layout.settings.x + 1,
+        layout.settings.y + 1,
+    )));
+
+    let settings_layout =
+        geometry::settings_layout(geometry::viewport_area(&app).expect("viewport"));
+    let (_, theme_rect) = geometry::settings_tab_regions(settings_layout.tabs)
+        .into_iter()
+        .find(|(tab, _)| *tab == SettingsTab::Theme)
+        .expect("theme tab region");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(theme_rect.x + 1, theme_rect.y)));
+
+    assert_eq!(
+        app.settings_menu.as_ref().expect("settings open").tab,
+        SettingsTab::Theme
+    );
 }
 
 #[test]
