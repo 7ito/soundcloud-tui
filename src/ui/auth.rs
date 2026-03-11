@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
-    Frame,
 };
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     debug_assert_eq!(app.mode, AppMode::Auth);
 
-    let block = pane_block("SoundCloud Onboarding", true);
+    let block = pane_block("SoundCloud Onboarding", true, app);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let header = Paragraph::new(vec![
         Line::from(Span::styled(
             "Connect your SoundCloud account",
-            header_style(),
+            header_style(app),
         )),
         Line::from("This Linux-first TUI keeps credentials and tokens on your machine."),
         Line::from(
@@ -65,7 +65,7 @@ fn render_checking(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         ),
         Line::from("Otherwise you will land on the credential form below."),
     ])
-    .block(pane_block("Session", false))
+    .block(pane_block("Session", false, app))
     .wrap(Wrap { trim: true });
 
     frame.render_widget(body, area);
@@ -92,7 +92,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Line::from("3. Paste the client ID and client secret into the fields below."),
         Line::from("4. Press Save and Continue to start the OAuth browser flow."),
     ])
-    .block(pane_block("Instructions", false))
+    .block(pane_block("Instructions", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(instructions, rows[0]);
 
@@ -103,6 +103,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         &app.auth.form.client_id,
         app.auth.focus == AuthFocus::ClientId,
         false,
+        app,
     );
     render_input(
         frame,
@@ -111,6 +112,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         &app.auth.form.client_secret,
         app.auth.focus == AuthFocus::ClientSecret,
         true,
+        app,
     );
     render_input(
         frame,
@@ -119,6 +121,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         &app.auth.form.redirect_uri,
         app.auth.focus == AuthFocus::RedirectUri,
         false,
+        app,
     );
 
     let buttons = Layout::default()
@@ -130,12 +133,14 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         buttons[0],
         "Open SoundCloud Apps Page",
         app.auth.focus == AuthFocus::OpenAppsPage,
+        app,
     );
     render_button(
         frame,
         buttons[1],
         "Save and Continue",
         app.auth.focus == AuthFocus::SaveAndContinue,
+        app,
     );
 
     let reminder = Paragraph::new(vec![
@@ -143,7 +148,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Line::from("Use Tab or Up/Down to move focus, type into fields, and press Enter on buttons."),
         Line::from("Paste works with terminal paste shortcuts and with Ctrl+V when clipboard access is available."),
     ])
-    .block(pane_block("Local Storage", false))
+    .block(pane_block("Local Storage", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(reminder, rows[5]);
 }
@@ -164,7 +169,7 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Line::from("SoundCloud will redirect back to your localhost callback URI when authorization finishes."),
         Line::from("If automatic capture fails, switch to manual callback mode and paste the full redirected URL."),
     ])
-    .block(pane_block("Authorize", false))
+    .block(pane_block("Authorize", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(instructions, rows[0]);
 
@@ -181,7 +186,7 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             "Approve in the browser, then return here. The app is listening for the callback.",
         ),
     ])
-    .block(pane_block("Browser", false))
+    .block(pane_block("Browser", false, app))
     .wrap(Wrap { trim: false });
     frame.render_widget(auth_url_widget, rows[1]);
 
@@ -198,18 +203,21 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         buttons[0],
         "Open Browser Again",
         app.auth.focus == AuthFocus::OpenBrowser,
+        app,
     );
     render_button(
         frame,
         buttons[1],
         "Paste Callback URL",
         app.auth.focus == AuthFocus::PasteCallback,
+        app,
     );
     render_button(
         frame,
         buttons[2],
         "Back to Credentials",
         app.auth.focus == AuthFocus::BackToCredentials,
+        app,
     );
 
     let status = Paragraph::new(vec![
@@ -218,7 +226,7 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             "If your browser did not open automatically, copy the URL above into it manually.",
         ),
     ])
-    .block(pane_block("Status", false))
+    .block(pane_block("Status", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(status, rows[3]);
 }
@@ -239,7 +247,7 @@ fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Line::from("After approving access in the browser, copy the full callback URL from the address bar."),
         Line::from("Paste that URL into the field below and submit it to complete the token exchange."),
     ])
-    .block(pane_block("Manual Callback", false))
+    .block(pane_block("Manual Callback", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(instructions, rows[0]);
 
@@ -250,6 +258,7 @@ fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         &app.auth.callback_input,
         app.auth.focus == AuthFocus::CallbackInput,
         false,
+        app,
     );
 
     let buttons = Layout::default()
@@ -261,19 +270,21 @@ fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         buttons[0],
         "Submit Callback URL",
         app.auth.focus == AuthFocus::SubmitCallback,
+        app,
     );
     render_button(
         frame,
         buttons[1],
         "Back to Browser Step",
         app.auth.focus == AuthFocus::BackToBrowser,
+        app,
     );
 
     let help = Paragraph::new(vec![
         Line::from("Accepted input: the full callback URL or just the raw query string containing code and state."),
         Line::from("Example: http://127.0.0.1:8974/callback?code=...&state=..."),
     ])
-    .block(pane_block("Accepted Formats", false))
+    .block(pane_block("Accepted Formats", false, app))
     .wrap(Wrap { trim: true });
     frame.render_widget(help, rows[3]);
 }
@@ -293,7 +304,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     lines.push(Line::from("Global shortcut: Ctrl+C quits the app."));
 
     let footer = Paragraph::new(lines)
-        .block(pane_block("Footer", false))
+        .block(pane_block("Footer", false, app))
         .wrap(Wrap { trim: true });
     frame.render_widget(footer, area);
 }
@@ -305,9 +316,10 @@ fn render_input(
     input: &TextInput,
     active: bool,
     masked: bool,
+    app: &AppState,
 ) {
     let display_value = input.display_value(masked);
-    let block = pane_block(title, active);
+    let block = pane_block(title, active, app);
     let inner = block.inner(area);
 
     frame.render_widget(block, area);
@@ -322,9 +334,9 @@ fn render_input(
     }
 }
 
-fn render_button(frame: &mut Frame<'_>, area: Rect, label: &str, active: bool) {
-    let button = Paragraph::new(Line::from(Span::styled(label, header_style())))
-        .block(pane_block(label, active))
+fn render_button(frame: &mut Frame<'_>, area: Rect, label: &str, active: bool, app: &AppState) {
+    let button = Paragraph::new(Line::from(Span::styled(label, header_style(app))))
+        .block(pane_block(label, active, app))
         .centered();
     frame.render_widget(button, area);
 }

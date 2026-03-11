@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Clear, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::{
@@ -31,7 +31,7 @@ const SOUND_CLOUD_BANNER_COMPACT: &str = concat!(
 );
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let block = pane_block("Welcome", true);
+    let block = pane_block("Welcome", true, app);
     let inner = block.inner(area);
     let banner = banner_for_width(inner.width);
     let banner_height = banner.lines().count() as u16;
@@ -54,7 +54,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     frame.render_widget(block, area);
 
     let banner_widget = Paragraph::new(Text::from(build_banner_gradient_lines(
-        &Theme::default(),
+        &app.theme(),
         banner,
         app.tick_count,
     )))
@@ -64,16 +64,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let footer_widget = Paragraph::new(vec![
         Line::from(Span::styled(
             "soundcloud in your terminal",
-            Style::default().fg(Theme::default().muted),
+            Style::default().fg(app.theme().inactive),
         )),
         Line::from(Span::styled(
             "Press / to search, z to queue, Q to view queue, Tab to move panes, Enter to open",
-            Style::default().fg(Theme::default().muted),
+            Style::default().fg(app.theme().inactive),
         )),
         Line::from(Span::styled(
             "Press any key to continue",
             Style::default()
-                .fg(Theme::default().accent_secondary)
+                .fg(app.theme().hovered)
                 .add_modifier(Modifier::BOLD),
         )),
     ])
@@ -117,12 +117,7 @@ fn build_banner_gradient_lines(theme: &Theme, banner: &str, tick_count: u64) -> 
 }
 
 fn gradient_color(theme: &Theme, t: f32) -> Color {
-    let palette = [
-        theme.accent,
-        theme.accent_secondary,
-        theme.accent_tertiary,
-        theme.accent,
-    ];
+    let palette = [theme.active, theme.banner, theme.hint, theme.active];
     let segment_count = (palette.len() - 1) as f32;
     let scaled = (t.clamp(0.0, 0.9999)) * segment_count;
     let index = scaled.floor() as usize;

@@ -1,10 +1,10 @@
 use image::load_from_memory;
 use log::{info, warn};
-use ratatui::{layout::Rect, Frame};
+use ratatui::{Frame, layout::Rect};
 use ratatui_image::{
+    Resize, StatefulImage,
     picker::{Picker, ProtocolType},
     protocol::StatefulProtocol,
-    Resize, StatefulImage,
 };
 
 struct CoverArtState {

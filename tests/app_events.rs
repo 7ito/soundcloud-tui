@@ -2,7 +2,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use soundcloud_tui::{
     app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Focus, Route},
     config::{
-        credentials::Credentials, history::RecentlyPlayedStore, settings::Settings,
+        credentials::Credentials,
+        history::{RecentlyPlayedEntry, RecentlyPlayedStore},
+        settings::{Settings, StartupBehavior},
         tokens::TokenStore,
     },
     player::command::PlayerCommand,
@@ -319,6 +321,7 @@ fn auth_complete_shows_help_and_persists_dismissal() {
         Settings {
             theme: "default".to_string(),
             show_help_on_startup: true,
+            ..Settings::default()
         },
         RecentlyPlayedStore::default(),
     );
@@ -500,9 +503,10 @@ fn selecting_content_without_session_does_not_replace_now_playing() {
 
     assert_eq!(app.now_playing.track, None);
     assert_eq!(app.now_playing.title, "Nothing playing");
-    assert!(app
-        .status
-        .contains("Playback is unavailable until SoundCloud authentication is complete"));
+    assert!(
+        app.status
+            .contains("Playback is unavailable until SoundCloud authentication is complete")
+    );
 }
 
 #[test]
@@ -694,6 +698,75 @@ fn f1_opens_and_closes_help_menu() {
 }
 
 #[test]
+fn open_settings_shortcut_and_save_persists_behavior_changes() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char(','),
+        KeyModifiers::ALT,
+    )));
+    assert!(app.show_settings());
+
+    for _ in 0..5 {
+        app.dispatch_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )));
+    }
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    assert!(
+        app.settings_menu
+            .as_ref()
+            .expect("settings open")
+            .draft
+            .wide_search_bar
+    );
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('s'),
+        KeyModifiers::ALT,
+    )));
+
+    assert!(app.settings().wide_search_bar);
+    match app.take_pending_command() {
+        Some(AppCommand::SaveSettings(settings)) => assert!(settings.wide_search_bar),
+        other => panic!("expected SaveSettings command, got {other:?}"),
+    }
+}
+
+#[test]
+fn startup_behavior_play_queues_recent_track_on_auth_complete() {
+    let track = dummy_track("soundcloud:tracks:500", "Startup Track");
+    let history = RecentlyPlayedStore {
+        entries: vec![RecentlyPlayedEntry {
+            track: track.clone(),
+            context: "Liked Songs".to_string(),
+            played_at_epoch: 0,
+        }],
+    };
+    let mut app = AppState::new_onboarding_with_persistence(
+        Credentials::default(),
+        Settings {
+            show_help_on_startup: false,
+            startup_behavior: StartupBehavior::Play,
+            ..Settings::default()
+        },
+        history,
+    );
+
+    app.dispatch_event(AppEvent::AuthCompleted(Ok(dummy_session())));
+
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track: queued, .. }) => assert_eq!(queued.title, track.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+}
+
+#[test]
 fn copy_shortcut_queues_clipboard_command() {
     let mut app = AppState::new();
     let track = dummy_track("soundcloud:tracks:11", "Share Me");
@@ -701,8 +774,8 @@ fn copy_shortcut_queues_clipboard_command() {
     app.now_playing.title = track.title.clone();
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
-        KeyCode::Char('C'),
-        KeyModifiers::SHIFT,
+        KeyCode::Char('c'),
+        KeyModifiers::NONE,
     )));
 
     match app.take_pending_command() {

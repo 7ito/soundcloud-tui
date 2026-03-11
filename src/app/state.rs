@@ -5,13 +5,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     app::{
-        reducer, Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus,
-        PlaybackIntent, RepeatMode, Route,
+        Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
+        RepeatMode, Route, SettingsMenuState, reducer,
     },
     config::{
         credentials::Credentials,
         history::{RecentlyPlayedEntry, RecentlyPlayedStore},
-        settings::Settings,
+        settings::{KeyAction, Settings, StartupBehavior},
         tokens::TokenStore,
     },
     input::events::{is_global_quit_key, map_main_key_event},
@@ -24,6 +24,7 @@ use crate::{
         },
         paging::Page,
     },
+    ui::theme::Theme,
 };
 
 #[derive(Debug, Clone)]
@@ -33,6 +34,7 @@ pub struct AppState {
     pub focus: Focus,
     pub should_quit: bool,
     pub show_help: bool,
+    pub settings_menu: Option<SettingsMenuState>,
     pub show_welcome: bool,
     pub error_modal: Option<ErrorModal>,
     pub add_to_playlist_modal: Option<AddToPlaylistModal>,
@@ -130,11 +132,11 @@ impl Default for LayoutState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct HelpRow {
-    pub description: &'static str,
-    pub event: &'static str,
-    pub context: &'static str,
+    pub description: String,
+    pub event: String,
+    pub context: String,
 }
 
 #[derive(Debug, Clone)]
@@ -292,220 +294,6 @@ struct SearchCache {
     users: CollectionState<UserSummary>,
 }
 
-const HELP_ROWS: [HelpRow; 30] = [
-    HelpRow {
-        description: "Move focus to next pane",
-        event: "Tab",
-        context: "Navigation",
-    },
-    HelpRow {
-        description: "Move focus to previous pane",
-        event: "Shift+Tab",
-        context: "Navigation",
-    },
-    HelpRow {
-        description: "Move selection down",
-        event: "j | Down",
-        context: "Navigation",
-    },
-    HelpRow {
-        description: "Move selection up",
-        event: "k | Up",
-        context: "Navigation",
-    },
-    HelpRow {
-        description: "Enter active pane",
-        event: "Enter",
-        context: "Navigation",
-    },
-    HelpRow {
-        description: "Open help menu",
-        event: "? | F1",
-        context: "General",
-    },
-    HelpRow {
-        description: "Enter input for search",
-        event: "/",
-        context: "General",
-    },
-    HelpRow {
-        description: "Pause/Resume playback",
-        event: "Space",
-        context: "General",
-    },
-    HelpRow {
-        description: "Open queue overlay",
-        event: "Q",
-        context: "General",
-    },
-    HelpRow {
-        description: "Add selected track to playlist",
-        event: "w",
-        context: "Content",
-    },
-    HelpRow {
-        description: "Add selected track to Liked Songs",
-        event: "l",
-        context: "Content",
-    },
-    HelpRow {
-        description: "Add selected track to queue",
-        event: "z",
-        context: "Content",
-    },
-    HelpRow {
-        description: "Add current now playing track to playlist",
-        event: "W",
-        context: "General",
-    },
-    HelpRow {
-        description: "Add current now playing track to Liked Songs",
-        event: "L",
-        context: "General",
-    },
-    HelpRow {
-        description: "Skip to next track",
-        event: "n",
-        context: "General",
-    },
-    HelpRow {
-        description: "Skip to previous track",
-        event: "p",
-        context: "General",
-    },
-    HelpRow {
-        description: "Seek backwards 5 seconds",
-        event: "<",
-        context: "General",
-    },
-    HelpRow {
-        description: "Seek forwards 5 seconds",
-        event: ">",
-        context: "General",
-    },
-    HelpRow {
-        description: "Increase volume by 10%",
-        event: "+",
-        context: "General",
-    },
-    HelpRow {
-        description: "Decrease volume by 10%",
-        event: "-",
-        context: "General",
-    },
-    HelpRow {
-        description: "Cycle repeat mode",
-        event: "Ctrl+r",
-        context: "General",
-    },
-    HelpRow {
-        description: "Toggle shuffle mode",
-        event: "Ctrl+s",
-        context: "General",
-    },
-    HelpRow {
-        description: "Copy URL to currently playing track",
-        event: "C",
-        context: "General",
-    },
-    HelpRow {
-        description: "Scroll down to next result page",
-        event: "Ctrl+d",
-        context: "Pagination",
-    },
-    HelpRow {
-        description: "Scroll up to previous result page",
-        event: "Ctrl+u",
-        context: "Pagination",
-    },
-    HelpRow {
-        description: "Decrease sidebar width",
-        event: "{",
-        context: "Layout",
-    },
-    HelpRow {
-        description: "Increase sidebar width",
-        event: "}",
-        context: "Layout",
-    },
-    HelpRow {
-        description: "Decrease playbar or library height",
-        event: "(",
-        context: "Layout",
-    },
-    HelpRow {
-        description: "Increase playbar or library height",
-        event: ")",
-        context: "Layout",
-    },
-    HelpRow {
-        description: "Reset layout to defaults",
-        event: "|",
-        context: "Layout",
-    },
-];
-
-const SEARCH_HELP_ROWS: [HelpRow; 8] = [
-    HelpRow {
-        description: "Search with input text",
-        event: "Enter",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Delete entire input",
-        event: "Ctrl+l",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Delete text from cursor to start of input",
-        event: "Ctrl+u",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Delete text from cursor to end of input",
-        event: "Ctrl+k",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Delete previous word",
-        event: "Ctrl+w",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Jump to start of input",
-        event: "Ctrl+i",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Jump to end of input",
-        event: "Ctrl+o",
-        context: "Search input",
-    },
-    HelpRow {
-        description: "Escape from input back to hovered block",
-        event: "Esc",
-        context: "Search input",
-    },
-];
-
-const CONTENT_HELP_ROWS: [HelpRow; 3] = [
-    HelpRow {
-        description: "Escape back to previously navigated pane",
-        event: "Esc",
-        context: "Tracks/Album/User",
-    },
-    HelpRow {
-        description: "Play the selected queued track",
-        event: "Enter",
-        context: "Queue overlay",
-    },
-    HelpRow {
-        description: "Remove the selected queued track",
-        event: "d",
-        context: "Queue overlay",
-    },
-];
-
 impl<T> Default for CollectionState<T> {
     fn default() -> Self {
         Self {
@@ -599,7 +387,11 @@ impl AppState {
         Self::new_with_persistence(Settings::default(), RecentlyPlayedStore::default())
     }
 
-    pub fn new_with_persistence(settings: Settings, recent_history: RecentlyPlayedStore) -> Self {
+    pub fn new_with_persistence(
+        mut settings: Settings,
+        recent_history: RecentlyPlayedStore,
+    ) -> Self {
+        settings.normalize();
         let library_items = vec![
             LibraryItem {
                 label: "Feed",
@@ -671,6 +463,7 @@ impl AppState {
             focus: Focus::Library,
             should_quit: false,
             show_help: false,
+            settings_menu: None,
             show_welcome: true,
             error_modal: None,
             add_to_playlist_modal: None,
@@ -1441,25 +1234,174 @@ impl AppState {
         }
     }
 
-    pub fn header_help_label(&self) -> &'static str {
+    pub fn header_help_label(&self) -> String {
         if self.show_help {
-            "Esc closes help | Ctrl+d/u scroll | ? toggles"
+            format!(
+                "Esc closes help | {}/{} scroll | {} toggles",
+                self.settings.keybinding(KeyAction::NextPage),
+                self.settings.keybinding(KeyAction::PreviousPage),
+                self.settings.keybinding(KeyAction::Help)
+            )
         } else {
-            "? help | / search | z queue | Q overlay | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit"
+            format!(
+                "{} help | {} search | {} queue | {} overlay | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit",
+                self.settings.keybinding(KeyAction::Help),
+                self.settings.keybinding(KeyAction::Search),
+                self.settings.keybinding(KeyAction::AddToQueue),
+                self.settings.keybinding(KeyAction::ShowQueue)
+            )
         }
     }
 
     pub fn help_rows(&self) -> Vec<HelpRow> {
-        let mut rows =
-            Vec::with_capacity(HELP_ROWS.len() + SEARCH_HELP_ROWS.len() + CONTENT_HELP_ROWS.len());
-        rows.extend_from_slice(&HELP_ROWS);
-        rows.extend_from_slice(&SEARCH_HELP_ROWS);
-        rows.extend_from_slice(&CONTENT_HELP_ROWS);
-        rows
+        vec![
+            help_row("Move focus to next pane", "Tab", "Navigation"),
+            help_row("Move focus to previous pane", "Shift+Tab", "Navigation"),
+            help_row("Move selection down", "j | Down", "Navigation"),
+            help_row("Move selection up", "k | Up", "Navigation"),
+            help_row("Enter active pane", "Enter", "Navigation"),
+            help_row(
+                "Open help menu",
+                format!("{} | F1", self.settings.keybinding(KeyAction::Help)),
+                "General",
+            ),
+            help_row(
+                "Enter input for search",
+                self.settings.keybinding(KeyAction::Search),
+                "General",
+            ),
+            help_row(
+                "Pause/Resume playback",
+                self.settings.keybinding(KeyAction::TogglePlayback),
+                "General",
+            ),
+            help_row(
+                "Open queue overlay",
+                self.settings.keybinding(KeyAction::ShowQueue),
+                "General",
+            ),
+            help_row("Add selected track to playlist", "w", "Content"),
+            help_row("Add selected track to Liked Songs", "l", "Content"),
+            help_row(
+                "Add selected track to queue",
+                self.settings.keybinding(KeyAction::AddToQueue),
+                "Content",
+            ),
+            help_row("Add current now playing track to playlist", "W", "General"),
+            help_row(
+                "Add current now playing track to Liked Songs",
+                "L",
+                "General",
+            ),
+            help_row(
+                "Skip to next track",
+                self.settings.keybinding(KeyAction::NextTrack),
+                "General",
+            ),
+            help_row(
+                "Skip to previous track",
+                self.settings.keybinding(KeyAction::PreviousTrack),
+                "General",
+            ),
+            help_row(
+                "Seek backwards",
+                self.settings.keybinding(KeyAction::SeekBackwards),
+                "General",
+            ),
+            help_row(
+                "Seek forwards",
+                self.settings.keybinding(KeyAction::SeekForwards),
+                "General",
+            ),
+            help_row(
+                "Increase volume",
+                self.settings.keybinding(KeyAction::IncreaseVolume),
+                "General",
+            ),
+            help_row(
+                "Decrease volume",
+                self.settings.keybinding(KeyAction::DecreaseVolume),
+                "General",
+            ),
+            help_row(
+                "Cycle repeat mode",
+                self.settings.keybinding(KeyAction::Repeat),
+                "General",
+            ),
+            help_row(
+                "Toggle shuffle mode",
+                self.settings.keybinding(KeyAction::Shuffle),
+                "General",
+            ),
+            help_row(
+                "Copy URL to currently playing track",
+                self.settings.keybinding(KeyAction::CopySongUrl),
+                "General",
+            ),
+            help_row(
+                "Scroll down to next result page",
+                self.settings.keybinding(KeyAction::NextPage),
+                "Pagination",
+            ),
+            help_row(
+                "Scroll up to previous result page",
+                self.settings.keybinding(KeyAction::PreviousPage),
+                "Pagination",
+            ),
+            help_row("Decrease sidebar width", "{", "Layout"),
+            help_row("Increase sidebar width", "}", "Layout"),
+            help_row("Decrease playbar or library height", "(", "Layout"),
+            help_row("Increase playbar or library height", ")", "Layout"),
+            help_row("Reset layout to defaults", "|", "Layout"),
+            help_row(
+                "Open settings menu",
+                self.settings.keybinding(KeyAction::OpenSettings),
+                "General",
+            ),
+            help_row("Search with input text", "Enter", "Search input"),
+            help_row("Delete entire input", "Ctrl+l", "Search input"),
+            help_row(
+                "Delete text from cursor to start of input",
+                "Ctrl+u",
+                "Search input",
+            ),
+            help_row(
+                "Delete text from cursor to end of input",
+                "Ctrl+k",
+                "Search input",
+            ),
+            help_row("Delete previous word", "Ctrl+w", "Search input"),
+            help_row("Jump to start of input", "Ctrl+i", "Search input"),
+            help_row("Jump to end of input", "Ctrl+o", "Search input"),
+            help_row(
+                "Escape from input back to hovered block",
+                "Esc",
+                "Search input",
+            ),
+            help_row(
+                "Escape back to previously navigated pane",
+                "Esc",
+                "Tracks/Album/User",
+            ),
+            help_row("Play the selected queued track", "Enter", "Queue overlay"),
+            help_row("Remove the selected queued track", "d", "Queue overlay"),
+        ]
     }
 
     pub fn help_row_count(&self) -> usize {
-        HELP_ROWS.len() + SEARCH_HELP_ROWS.len() + CONTENT_HELP_ROWS.len()
+        self.help_rows().len()
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn theme(&self) -> Theme {
+        Theme::from_settings(&self.settings)
+    }
+
+    pub fn show_settings(&self) -> bool {
+        self.settings_menu.is_some()
     }
 
     pub fn set_focus(&mut self, focus: Focus) {
@@ -1522,7 +1464,7 @@ impl AppState {
             queue_position,
             self.player.repeat_mode.label(),
             if self.player.shuffle_enabled {
-                "On"
+                self.settings.shuffle_icon.as_str()
             } else {
                 "Off"
             }
@@ -2101,6 +2043,23 @@ impl AppState {
         self.start_track_playback(item.track, item.context);
     }
 
+    fn force_previous_track(&mut self) {
+        if self.playback_plan.current_index.is_none() {
+            self.status = "Nothing queued for playback.".to_string();
+            return;
+        }
+
+        if let Some(previous_index) = self.previous_playback_index() {
+            if let Some(item) = self.playback_plan.items.get(previous_index).cloned() {
+                self.playback_plan.current_index = Some(previous_index);
+                self.start_track_playback(item.track, item.context);
+                return;
+            }
+        }
+
+        let _ = self.restart_current_track();
+    }
+
     fn apply_player_event(&mut self, event: PlayerEvent) {
         match event {
             PlayerEvent::PlaybackStarted => {
@@ -2109,18 +2068,21 @@ impl AppState {
                 if let Some(track) = &self.now_playing.track {
                     self.status = format!("Playing {}.", track.title);
                 }
+                self.sync_window_title();
             }
             PlayerEvent::PlaybackResumed => {
                 self.player.status = PlaybackStatus::Playing;
                 if let Some(track) = &self.now_playing.track {
                     self.status = format!("Playing {}.", track.title);
                 }
+                self.sync_window_title();
             }
             PlayerEvent::PlaybackPaused => {
                 self.player.status = PlaybackStatus::Paused;
                 if let Some(track) = &self.now_playing.track {
                     self.status = format!("Paused {}.", track.title);
                 }
+                self.sync_window_title();
             }
             PlayerEvent::PlaybackStopped => {
                 self.player.status = PlaybackStatus::Stopped;
@@ -2128,13 +2090,16 @@ impl AppState {
                 self.now_playing.elapsed_label = "0:00".to_string();
                 self.now_playing.progress_ratio = 0.0;
                 self.status = "Playback stopped.".to_string();
+                self.sync_window_title();
             }
             PlayerEvent::TrackEnded => {
                 self.player.status = PlaybackStatus::Stopped;
                 self.player.position_seconds = 0.0;
                 self.now_playing.elapsed_label = "0:00".to_string();
                 self.now_playing.progress_ratio = 0.0;
-                if self.player.repeat_mode == RepeatMode::Track {
+                if self.settings.stop_after_current_track {
+                    self.status = "Stopped after the current track.".to_string();
+                } else if self.player.repeat_mode == RepeatMode::Track {
                     if !self.restart_current_track() {
                         self.status = "Reached the end of the queue.".to_string();
                     }
@@ -2437,9 +2402,10 @@ impl AppState {
     }
 
     fn handle_error_modal_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc | KeyCode::Enter => self.dismiss_error_modal(),
-            _ => {}
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter)
+            || self.settings.key_matches(KeyAction::Back, key)
+        {
+            self.dismiss_error_modal();
         }
     }
 
@@ -2450,9 +2416,11 @@ impl AppState {
 
     fn handle_add_to_playlist_modal_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _)
-            | (KeyCode::Char('q'), KeyModifiers::NONE)
-            | (KeyCode::Char('q'), KeyModifiers::SHIFT) => self.dismiss_add_to_playlist_modal(),
+            _ if matches!(key.code, KeyCode::Esc)
+                || self.settings.key_matches(KeyAction::Back, key) =>
+            {
+                self.dismiss_add_to_playlist_modal()
+            }
             (KeyCode::Enter, _) => self.confirm_add_to_playlist_selection(),
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
                 self.move_add_to_playlist_selection(1)
@@ -2637,6 +2605,134 @@ impl AppState {
         moved || queued_more
     }
 
+    fn open_settings_menu(&mut self) {
+        self.show_help = false;
+        self.settings_menu = Some(SettingsMenuState::new(&self.settings));
+        self.status = "Opened settings.".to_string();
+    }
+
+    fn close_settings_menu(&mut self) {
+        let discarded = self
+            .settings_menu
+            .as_ref()
+            .map(|menu| menu.has_unsaved_changes(&self.settings))
+            .unwrap_or(false);
+        self.settings_menu = None;
+        self.status = if discarded {
+            "Discarded unsaved settings changes.".to_string()
+        } else {
+            "Closed settings.".to_string()
+        };
+    }
+
+    fn save_settings_menu(&mut self) {
+        let Some(mut menu) = self.settings_menu.take() else {
+            return;
+        };
+
+        let previous = self.settings.clone();
+        menu.draft.normalize();
+        if let Err(error) = menu.draft.validate() {
+            self.show_main_error("Could not save settings", error.to_string());
+            self.settings_menu = Some(menu);
+            return;
+        }
+
+        self.settings = menu.draft.clone();
+        self.queue_command(AppCommand::SaveSettings(self.settings.clone()));
+        self.apply_runtime_settings(&previous);
+        menu.draft = self.settings.clone();
+        menu.editing = false;
+        menu.edit_buffer.clear();
+        self.settings_menu = Some(menu);
+
+        let restart_note = if previous.tick_rate_ms != self.settings.tick_rate_ms {
+            " Tick rate applies on the next launch."
+        } else {
+            ""
+        };
+        self.status = format!("Saved settings.{}", restart_note);
+    }
+
+    fn handle_settings_key(&mut self, key: KeyEvent) {
+        let Some(mut menu) = self.settings_menu.take() else {
+            return;
+        };
+
+        if menu.editing {
+            let selected = menu.items().get(menu.selected_index()).cloned();
+            if matches!(key.code, KeyCode::Esc) {
+                menu.cancel_edit();
+                self.status = "Cancelled the current settings edit.".to_string();
+                self.settings_menu = Some(menu);
+                return;
+            }
+
+            match selected.map(|item| item.value) {
+                Some(crate::app::SettingsValue::Key(_)) => match menu.capture_keybinding(key) {
+                    Ok(binding) => {
+                        self.status = format!("Bound setting to {}.", binding);
+                    }
+                    Err(error) => {
+                        self.show_main_error("Could not update keybinding", error.to_string());
+                    }
+                },
+                Some(crate::app::SettingsValue::Number(_))
+                | Some(crate::app::SettingsValue::Text(_))
+                | Some(crate::app::SettingsValue::Color(_)) => match (key.code, key.modifiers) {
+                    (KeyCode::Enter, _) => match menu.confirm_edit() {
+                        Ok(()) => self.status = "Updated the draft setting value.".to_string(),
+                        Err(error) => {
+                            self.show_main_error("Could not update setting", error.to_string())
+                        }
+                    },
+                    (KeyCode::Backspace, _) => {
+                        menu.edit_buffer.pop();
+                    }
+                    (KeyCode::Char(ch), modifiers)
+                        if modifiers.intersection(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                            == KeyModifiers::NONE =>
+                    {
+                        menu.edit_buffer.push(ch);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+
+            self.settings_menu = Some(menu);
+            return;
+        }
+
+        if self.settings.key_matches(KeyAction::SaveSettings, key) {
+            self.settings_menu = Some(menu);
+            self.save_settings_menu();
+            return;
+        }
+
+        if matches!(key.code, KeyCode::Esc) || self.settings.key_matches(KeyAction::Back, key) {
+            self.settings_menu = Some(menu);
+            self.close_settings_menu();
+            return;
+        }
+
+        match (key.code, key.modifiers) {
+            (KeyCode::Left, _) => menu.switch_tab(false),
+            (KeyCode::Right, _) => menu.switch_tab(true),
+            (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => menu.move_selection(1),
+            (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => menu.move_selection(-1),
+            (KeyCode::Enter, _) => match menu.activate_selected() {
+                Ok(_) => {
+                    self.status = format!("Editing {} settings.", menu.tab.label());
+                }
+                Err(error) => self.show_main_error("Could not update setting", error.to_string()),
+            },
+            _ => {}
+        }
+
+        self.settings_menu = Some(menu);
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) {
         if is_global_quit_key(key) {
             self.should_quit = true;
@@ -2657,6 +2753,11 @@ impl AppState {
 
                 if self.error_modal.is_some() {
                     self.handle_error_modal_key(key);
+                    return;
+                }
+
+                if self.settings_menu.is_some() {
+                    self.handle_settings_key(key);
                     return;
                 }
 
@@ -2698,22 +2799,30 @@ impl AppState {
     }
 
     fn handle_help_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::F(1))
+            || self.settings.key_matches(KeyAction::Help, key)
+            || self.settings.key_matches(KeyAction::Back, key)
+        {
+            self.dismiss_help();
+            return;
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _)
-            | (KeyCode::Enter, _)
-            | (KeyCode::Char('?'), _)
-            | (KeyCode::F(1), _) => self.dismiss_help(),
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => self.scroll_help(1),
             (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => self.scroll_help(-1),
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.page_help(true),
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.page_help(false),
+            _ if self.settings.key_matches(KeyAction::NextPage, key) => self.page_help(true),
+            _ if self.settings.key_matches(KeyAction::PreviousPage, key) => self.page_help(false),
             _ => {}
         }
     }
 
     fn handle_queue_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) => self.close_queue_overlay(),
+            _ if matches!(key.code, KeyCode::Esc)
+                || self.settings.key_matches(KeyAction::Back, key) =>
+            {
+                self.close_queue_overlay()
+            }
             (KeyCode::Enter, _) => self.play_selected_queue_track(),
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
                 self.move_queue_selection(true)
@@ -2727,25 +2836,23 @@ impl AppState {
     }
 
     fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
+        if self.settings.key_matches(KeyAction::Search, key) {
+            self.begin_search_input();
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::AddToQueue, key) && self.focus == Focus::Content {
+            self.queue_selected_track();
+            return true;
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Char('/'), KeyModifiers::NONE) => {
-                self.begin_search_input();
-                true
-            }
-            (KeyCode::Char('z'), KeyModifiers::NONE) if self.focus == Focus::Content => {
-                self.queue_selected_track();
-                true
-            }
             (KeyCode::Char('w'), KeyModifiers::NONE) if self.focus == Focus::Content => {
                 self.open_add_to_playlist_modal_for_selected_track();
                 true
             }
             (KeyCode::Char('l'), KeyModifiers::NONE) if self.focus == Focus::Content => {
                 self.like_selected_track();
-                true
-            }
-            (KeyCode::Char('Q'), KeyModifiers::SHIFT) => {
-                self.open_queue_overlay();
                 true
             }
             (KeyCode::Char('W'), KeyModifiers::SHIFT) => {
@@ -2756,7 +2863,7 @@ impl AppState {
                 self.like_now_playing_track();
                 true
             }
-            (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => {
+            (KeyCode::F(1), _) => {
                 self.help_scroll = 0;
                 self.show_help = true;
                 self.status = "Showing help menu.".to_string();
@@ -2765,18 +2872,6 @@ impl AppState {
             (KeyCode::Esc, _) if self.focus == Focus::Content => {
                 self.focus = self.content_return_focus;
                 self.status = format!("Returned focus to {}.", self.focus.label());
-                true
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => self.page_results(true),
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.page_results(false),
-            (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
-                self.cycle_repeat_mode();
-                true
-            }
-            (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
-                self.apply_playback_intent(PlaybackIntent::SetShuffle(
-                    !self.player.shuffle_enabled,
-                ));
                 true
             }
             (KeyCode::Char('{'), _) => {
@@ -2799,16 +2894,40 @@ impl AppState {
                 self.reset_layout();
                 true
             }
-            (KeyCode::Char(ch), modifiers)
-                if modifiers.intersection(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                    == KeyModifiers::NONE
-                    && ch.eq_ignore_ascii_case(&'c') =>
-            {
-                self.copy_now_playing_url();
-                true
-            }
             (KeyCode::F(5), _) => {
                 self.reload_current_route();
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::ShowQueue, key) => {
+                self.open_queue_overlay();
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::Help, key) => {
+                self.help_scroll = 0;
+                self.show_help = true;
+                self.status = "Showing help menu.".to_string();
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::OpenSettings, key) => {
+                self.open_settings_menu();
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::NextPage, key) => self.page_results(true),
+            _ if self.settings.key_matches(KeyAction::PreviousPage, key) => {
+                self.page_results(false)
+            }
+            _ if self.settings.key_matches(KeyAction::Repeat, key) => {
+                self.cycle_repeat_mode();
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::Shuffle, key) => {
+                self.apply_playback_intent(PlaybackIntent::SetShuffle(
+                    !self.player.shuffle_enabled,
+                ));
+                true
+            }
+            _ if self.settings.key_matches(KeyAction::CopySongUrl, key) => {
+                self.copy_now_playing_url();
                 true
             }
             _ => false,
@@ -2852,6 +2971,13 @@ impl AppState {
             AppMode::Auth => {
                 self.auth.paste_text(text);
                 self.status = "Pasted clipboard contents into the active field.".to_string();
+            }
+            AppMode::Main if self.settings_menu.as_ref().is_some_and(|menu| menu.editing) => {
+                if let Some(menu) = self.settings_menu.as_mut() {
+                    let sanitized = text.replace(['\r', '\n'], " ");
+                    menu.edit_buffer.push_str(sanitized.trim());
+                    self.status = "Pasted text into the current settings field.".to_string();
+                }
             }
             AppMode::Main if self.focus == Focus::Search => {
                 self.show_welcome = false;
@@ -3124,41 +3250,61 @@ impl AppState {
     }
 
     fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
-        match (key.code, key.modifiers) {
-            (KeyCode::Char(' '), _) => {
-                self.apply_playback_intent(PlaybackIntent::TogglePause);
-                true
-            }
-            (KeyCode::Char('n'), KeyModifiers::NONE) => {
-                self.apply_playback_intent(PlaybackIntent::Next);
-                true
-            }
-            (KeyCode::Char('p'), KeyModifiers::NONE) => {
-                self.apply_playback_intent(PlaybackIntent::Previous);
-                true
-            }
-            (KeyCode::Char('<'), _) => {
-                self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: -5.0 });
-                true
-            }
-            (KeyCode::Char('>'), _) => {
-                self.apply_playback_intent(PlaybackIntent::SeekRelative { seconds: 5.0 });
-                true
-            }
-            (KeyCode::Char('-'), _) => {
-                self.apply_playback_intent(PlaybackIntent::SetVolume {
-                    percent: self.player.volume_percent - 10.0,
-                });
-                true
-            }
-            (KeyCode::Char('+'), _) | (KeyCode::Char('='), KeyModifiers::SHIFT) => {
-                self.apply_playback_intent(PlaybackIntent::SetVolume {
-                    percent: self.player.volume_percent + 10.0,
-                });
-                true
-            }
-            _ => false,
+        let seek_seconds = self.settings.seek_duration_ms as f64 / 1000.0;
+        let volume_increment = self.settings.volume_increment as f64;
+
+        if self.settings.key_matches(KeyAction::TogglePlayback, key) {
+            self.apply_playback_intent(PlaybackIntent::TogglePause);
+            return true;
         }
+
+        if self.settings.key_matches(KeyAction::NextTrack, key) {
+            self.apply_playback_intent(PlaybackIntent::Next);
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::PreviousTrack, key) {
+            self.apply_playback_intent(PlaybackIntent::Previous);
+            return true;
+        }
+
+        if self
+            .settings
+            .key_matches(KeyAction::ForcePreviousTrack, key)
+        {
+            self.force_previous_track();
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::SeekBackwards, key) {
+            self.apply_playback_intent(PlaybackIntent::SeekRelative {
+                seconds: -seek_seconds,
+            });
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::SeekForwards, key) {
+            self.apply_playback_intent(PlaybackIntent::SeekRelative {
+                seconds: seek_seconds,
+            });
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::DecreaseVolume, key) {
+            self.apply_playback_intent(PlaybackIntent::SetVolume {
+                percent: self.player.volume_percent - volume_increment,
+            });
+            return true;
+        }
+
+        if self.settings.key_matches(KeyAction::IncreaseVolume, key) {
+            self.apply_playback_intent(PlaybackIntent::SetVolume {
+                percent: self.player.volume_percent + volume_increment,
+            });
+            return true;
+        }
+
+        false
     }
 
     fn handle_auth_intent(&mut self, intent: AuthIntent) {
@@ -3236,6 +3382,7 @@ impl AppState {
         self.session = Some(session.clone());
         self.set_auth_session(&session);
         self.reset_live_data();
+        self.apply_startup_behavior();
         self.show_welcome = !self.settings.show_help_on_startup;
         if self.settings.show_help_on_startup {
             self.help_scroll = 0;
@@ -3246,10 +3393,70 @@ impl AppState {
         }
         self.request_playlists_load(false);
         self.request_route_load(false);
+        self.sync_window_title();
+    }
+
+    fn apply_runtime_settings(&mut self, previous: &Settings) {
+        if !self.settings.draw_cover_art {
+            self.cover_art = CoverArt::default();
+        }
+
+        if previous.startup_behavior != self.settings.startup_behavior && self.session.is_some() {
+            self.apply_startup_behavior();
+        }
+
+        self.sync_window_title();
+    }
+
+    fn apply_startup_behavior(&mut self) {
+        let Some(track) = self
+            .recent_history
+            .entries
+            .first()
+            .map(|entry| entry.track.clone())
+        else {
+            return;
+        };
+
+        match self.settings.startup_behavior {
+            StartupBehavior::Continue => {}
+            StartupBehavior::Pause => {
+                self.now_playing = NowPlaying {
+                    track: Some(track.clone()),
+                    title: track.title.clone(),
+                    artist: track.artist.clone(),
+                    context: "Startup: recent track".to_string(),
+                    artwork_url: track.artwork_url.clone(),
+                    elapsed_label: "0:00".to_string(),
+                    duration_label: track.duration_label(),
+                    progress_ratio: 0.0,
+                };
+                self.refresh_cover_art(track.artwork_url.as_deref());
+                self.status = format!("Loaded {} into the playbar.", track.title);
+            }
+            StartupBehavior::Play => {
+                self.now_playing.context = "Startup: recent track".to_string();
+                self.start_track_playback(track.clone(), "Startup: recent track".to_string());
+                self.status = format!("Starting your most recent track: {}.", track.title);
+            }
+        }
     }
 
     fn queue_command(&mut self, command: AppCommand) {
         self.pending_commands.push(command);
+    }
+
+    fn sync_window_title(&mut self) {
+        let title = if self.settings.set_window_title {
+            match self.now_playing.track.as_ref() {
+                Some(track) => format!("{} - {} | soundcloud-tui", track.title, track.artist),
+                None => format!("{} | soundcloud-tui", self.route_title()),
+            }
+        } else {
+            "soundcloud-tui".to_string()
+        };
+
+        self.queue_command(AppCommand::SetWindowTitle(title));
     }
 
     fn request_playlists_load(&mut self, append: bool) {
@@ -4282,5 +4489,17 @@ fn playlist_summary_subtitle(playlist: &SoundcloudPlaylist) -> String {
         playlist.description.clone()
     } else {
         format!("By {} - {}", playlist.creator, playlist.track_count_label())
+    }
+}
+
+fn help_row(
+    description: impl Into<String>,
+    event: impl Into<String>,
+    context: impl Into<String>,
+) -> HelpRow {
+    HelpRow {
+        description: description.into(),
+        event: event.into(),
+        context: context.into(),
     }
 }

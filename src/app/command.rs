@@ -22,6 +22,7 @@ pub enum AppCommand {
         callback_input: String,
     },
     SaveSettings(Settings),
+    SetWindowTitle(String),
     SaveHistory(RecentlyPlayedStore),
     LoadFeed {
         session: AuthorizedSession,

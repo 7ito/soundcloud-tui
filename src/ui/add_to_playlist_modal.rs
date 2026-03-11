@@ -1,17 +1,14 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Flex, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::{
     app::AppState,
-    ui::{
-        theme::Theme,
-        widgets::{header_style, pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
-    },
+    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -20,7 +17,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     };
 
     let overlay = centered_rect(area);
-    let block = pane_block("Add Track To Playlist", true);
+    let block = pane_block("Add Track To Playlist", true, app);
     let inner = block.inner(overlay);
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -34,11 +31,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let prompt = Paragraph::new(vec![
         Line::from(vec![
             Span::raw("Choose a playlist for: "),
-            Span::styled(modal.track.title.as_str(), header_style()),
+            Span::styled(modal.track.title.as_str(), header_style(app)),
         ]),
         Line::from(Span::styled(
             modal.track.artist.as_str(),
-            Style::default().fg(Theme::default().muted),
+            Style::default().fg(app.theme().inactive),
         )),
     ])
     .wrap(Wrap { trim: true });
@@ -49,7 +46,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     if app.playlists.is_empty() {
         let empty = Paragraph::new("No playlists are available yet.")
-            .style(Style::default().fg(Theme::default().muted))
+            .style(Style::default().fg(app.theme().inactive))
             .wrap(Wrap { trim: true });
         frame.render_widget(empty, sections[1]);
     } else {
@@ -59,7 +56,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             .map(|playlist| ListItem::new(playlist.title.clone()))
             .collect::<Vec<_>>();
         let list = List::new(items)
-            .highlight_style(selected_row_style())
+            .highlight_style(selected_row_style(app))
             .highlight_symbol(HIGHLIGHT_SYMBOL);
         let mut state = ListState::default();
         state.select(Some(
@@ -71,7 +68,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     }
 
     let footer = Paragraph::new("Enter add | q cancel | j/k or arrows move | H/M/L jump")
-        .style(Style::default().fg(Theme::default().muted))
+        .style(Style::default().fg(app.theme().inactive))
         .wrap(Wrap { trim: true });
     frame.render_widget(footer, sections[2]);
 }

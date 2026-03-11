@@ -10,7 +10,9 @@ use arboard::Clipboard;
 use crossterm::{
     event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
+    },
 };
 use log::{info, warn};
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -49,6 +51,7 @@ async fn run() -> Result<()> {
     config::settings::ensure_default_file(&paths)?;
     config::init_logging(&paths)?;
     let settings = config::settings::Settings::load(&paths)?;
+    let tick_rate_ms = settings.tick_rate_ms;
     let recent_history = config::history::RecentlyPlayedStore::load(&paths)?;
 
     info!("starting soundcloud-tui auth onboarding scaffold");
@@ -73,7 +76,7 @@ async fn run() -> Result<()> {
         }
     }
 
-    let mut events = EventHandler::new(Duration::from_millis(250));
+    let mut events = EventHandler::new(Duration::from_millis(tick_rate_ms));
     let (async_tx, mut async_rx) = mpsc::unbounded_channel::<AppEvent>();
     let player = PlayerHandle::spawn(paths.clone(), async_tx.clone());
 
@@ -159,6 +162,11 @@ fn run_command(
         AppCommand::SaveSettings(settings) => {
             if let Err(error) = settings.save(&paths) {
                 warn!("failed to save settings: {error}");
+            }
+        }
+        AppCommand::SetWindowTitle(title) => {
+            if let Err(error) = execute!(io::stdout(), SetTitle(title)) {
+                warn!("failed to set window title: {error}");
             }
         }
         AppCommand::SaveHistory(history) => {

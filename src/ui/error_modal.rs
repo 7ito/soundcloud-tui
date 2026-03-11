@@ -1,8 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Flex, Layout, Rect},
+    style::Style,
     text::{Line, Text},
     widgets::{Clear, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::{app::AppState, ui::widgets::pane_block};
@@ -13,7 +14,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     };
 
     let overlay = centered_rect(area);
-    let block = pane_block(error.title.as_str(), true);
+    let block = pane_block(error.title.as_str(), true, app);
     let inner = block.inner(overlay);
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -24,6 +25,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Line::from(""),
         Line::from("Press Esc or Enter to dismiss."),
     ]))
+    .style(Style::default().fg(app.theme().error_text))
     .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, overlay);

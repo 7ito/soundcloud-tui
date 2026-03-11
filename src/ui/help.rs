@@ -1,16 +1,13 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::Line,
     widgets::{Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::{
     app::{AppState, HelpRow},
-    ui::{
-        theme::Theme,
-        widgets::{header_style, pane_block},
-    },
+    ui::widgets::{header_style, pane_block},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -18,7 +15,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .constraints([Constraint::Min(1)])
         .margin(1)
         .split(area)[0];
-    let block = pane_block("Help (press <Esc> to go back)", true);
+    let block = pane_block("Help (press <Esc> to go back)", true, app);
     let inner = block.inner(overlay);
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -33,7 +30,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Constraint::Percentage(28),
     ];
     let header =
-        Row::new(["Description", "Event", "Context"].map(Cell::from)).style(header_style());
+        Row::new(["Description", "Event", "Context"].map(Cell::from)).style(header_style(app));
     let table_rows = rows
         .iter()
         .skip(scroll)
@@ -46,7 +43,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         visible_end,
         rows.len()
     )))
-    .style(ratatui::style::Style::default().fg(Theme::default().muted));
+    .style(ratatui::style::Style::default().fg(app.theme().inactive));
     let table = Table::new(table_rows, widths).header(header);
 
     frame.render_widget(Clear, area);
@@ -59,9 +56,9 @@ fn render_row(row: &HelpRow, width: u16) -> Row<'static> {
     let [description_width, event_width, context_width] = column_widths(width as usize);
 
     Row::new([
-        Cell::from(truncate(row.description, description_width)),
-        Cell::from(truncate(row.event, event_width)),
-        Cell::from(truncate(row.context, context_width)),
+        Cell::from(truncate(row.description.as_str(), description_width)),
+        Cell::from(truncate(row.event.as_str(), event_width)),
+        Cell::from(truncate(row.context.as_str(), context_width)),
     ])
 }
 
@@ -102,7 +99,7 @@ fn truncate(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
     use crate::app::AppState;

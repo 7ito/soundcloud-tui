@@ -1,17 +1,14 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::Line,
     widgets::{Cell, Clear, Paragraph, Row, Table, TableState},
-    Frame,
 };
 
 use crate::{
     app::AppState,
-    ui::{
-        theme::Theme,
-        widgets::{header_style, pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
-    },
+    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -19,7 +16,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .constraints([Constraint::Min(1)])
         .margin(1)
         .split(area)[0];
-    let block = pane_block("Queue (press Esc to go back)", true);
+    let block = pane_block("Queue (press Esc to go back)", true, app);
     let inner = block.inner(overlay);
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -27,7 +24,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .split(inner);
     let rows = app.queue_overlay_rows();
     let header =
-        Row::new(["Title", "Artist", "State", "Length"].map(Cell::from)).style(header_style());
+        Row::new(["Title", "Artist", "State", "Length"].map(Cell::from)).style(header_style(app));
     let table_rows = rows.iter().map(|row| {
         Row::new(
             row.columns
@@ -46,18 +43,18 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let table = Table::new(table_rows, widths)
         .header(header)
         .highlight_symbol(HIGHLIGHT_SYMBOL)
-        .row_highlight_style(selected_row_style());
+        .row_highlight_style(selected_row_style(app));
     let footer = Paragraph::new(Line::from(
         "Enter play | d remove | Esc close | j/k or arrows move",
     ))
-    .style(Style::default().fg(Theme::default().muted));
+    .style(Style::default().fg(app.theme().inactive));
 
     frame.render_widget(Clear, area);
     frame.render_widget(block, overlay);
 
     if rows.is_empty() {
         frame.render_widget(
-            Paragraph::new("No queued tracks.").style(Style::default().fg(Theme::default().muted)),
+            Paragraph::new("No queued tracks.").style(Style::default().fg(app.theme().inactive)),
             sections[0],
         );
     } else {

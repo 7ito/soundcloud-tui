@@ -10,6 +10,7 @@ pub mod help;
 pub mod layout;
 pub mod playbar;
 pub mod queue;
+pub mod settings;
 pub mod sidebar;
 pub mod theme;
 pub mod welcome;

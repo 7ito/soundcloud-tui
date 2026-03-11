@@ -1,16 +1,17 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, LineGauge, Padding, Paragraph, Wrap},
-    Frame,
 };
+use ratatui_image::picker::ProtocolType;
 
+use crate::app::state::PlaybackStatus;
 use crate::{
     app::{AppState, Focus},
     ui::{
         cover_art::CoverArtRenderer,
-        theme::Theme,
         widgets::{header_style, pane_block},
     },
 };
@@ -31,31 +32,38 @@ const CONTROLS: [&str; 11] = [
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut CoverArtRenderer) {
     let title = playbar_title(app);
-    let block = pane_block(title.as_str(), app.focus == Focus::Playbar);
+    let block = pane_block(title.as_str(), app.focus == Focus::Playbar, app);
     let inner = block.inner(area);
 
     frame.render_widget(block, area);
 
-    cover_art.sync(
-        app.now_playing.artwork_url.as_deref(),
-        app.cover_art.bytes.as_deref(),
-    );
+    if should_draw_cover_art(app, cover_art) {
+        cover_art.sync(
+            app.now_playing.artwork_url.as_deref(),
+            app.cover_art.bytes.as_deref(),
+        );
+    } else {
+        cover_art.sync(None, None);
+    }
 
     if inner.width < 24 || inner.height < 4 {
         render_compact(frame, inner, app);
         return;
     }
 
-    let art_width = (inner.height.saturating_mul(2)).clamp(8, inner.width.saturating_sub(12));
-    let layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(art_width), Constraint::Min(1)])
-        .spacing(1)
-        .split(inner);
-    let art_area = layout[0];
-    let meta_area = layout[1];
-
-    render_cover_art(frame, art_area, app, cover_art);
+    let show_cover_art = should_draw_cover_art(app, cover_art) && inner.width >= 32;
+    let meta_area = if show_cover_art {
+        let art_width = (inner.height.saturating_mul(2)).clamp(8, inner.width.saturating_sub(12));
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(art_width), Constraint::Min(1)])
+            .spacing(1)
+            .split(inner);
+        render_cover_art(frame, layout[0], app, cover_art);
+        layout[1]
+    } else {
+        inner
+    };
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -69,15 +77,23 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
 
     let title = Paragraph::new(Line::from(Span::styled(
         app.now_playing.title.as_str(),
-        header_style(),
+        header_style(app),
     )));
-    let artist = Paragraph::new(Line::from(app.now_playing.artist.as_str()));
+    let artist = Paragraph::new(Line::from(app.now_playing.artist.as_str()))
+        .style(Style::default().fg(app.theme().text));
     let controls = Paragraph::new(Line::from(CONTROLS.join(" "))).alignment(Alignment::Center);
     let progress = LineGauge::default()
         .ratio(app.now_playing.progress_ratio)
-        .filled_style(header_style())
-        .unfilled_style(Style::default().fg(Theme::default().muted))
+        .filled_style(Style::default().fg(app.theme().playbar_progress))
+        .unfilled_style(Style::default().fg(app.theme().inactive))
         .label(progress_label(app));
+
+    if app.theme().playbar_background != ratatui::style::Color::Reset {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(app.theme().playbar_background)),
+            meta_area,
+        );
+    }
 
     frame.render_widget(title, rows[0]);
     frame.render_widget(artist, rows[1]);
@@ -89,9 +105,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, cover_art: &mut
 
 fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let compact = Paragraph::new(vec![
-        Line::from(Span::styled(app.now_playing.title.as_str(), header_style())),
+        Line::from(Span::styled(
+            app.now_playing.title.as_str(),
+            header_style(app),
+        )),
         Line::from(progress_label(app)),
     ])
+    .style(Style::default().fg(app.theme().text))
     .wrap(Wrap { trim: true });
 
     frame.render_widget(compact, area);
@@ -116,7 +136,7 @@ fn render_cover_art(
     };
 
     let widget = Paragraph::new(placeholder)
-        .style(Style::default().fg(Theme::default().muted))
+        .style(Style::default().fg(app.theme().inactive))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
     frame.render_widget(widget, area);
@@ -144,14 +164,14 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         width,
         height: 3.min(area.height),
     };
-    let theme = Theme::default();
+    let theme = app.theme();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .padding(Padding::horizontal(1))
-        .border_style(Style::default().fg(theme.accent_secondary));
+        .border_style(Style::default().fg(theme.hovered));
     let paragraph = Paragraph::new(toast.message.as_str())
-        .style(Style::default().fg(theme.accent_secondary))
+        .style(Style::default().fg(theme.hovered))
         .alignment(Alignment::Center)
         .block(block);
 
@@ -160,12 +180,27 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 }
 
 fn playbar_title(app: &AppState) -> String {
+    let status = match app.player.status {
+        PlaybackStatus::Playing => format!("{} Playing", app.settings().playing_icon),
+        PlaybackStatus::Paused => format!("{} Paused", app.settings().paused_icon),
+        PlaybackStatus::Buffering => "Loading".to_string(),
+        PlaybackStatus::Stopped => "Stopped".to_string(),
+    };
+
     format!(
         " {} | {} | Volume: {:.0}% ",
-        app.player.status.label(),
+        status,
         app.queue_status_label(),
         app.player.volume_percent.round()
     )
+}
+
+fn should_draw_cover_art(app: &AppState, cover_art: &CoverArtRenderer) -> bool {
+    if !app.settings().draw_cover_art {
+        return false;
+    }
+
+    app.settings().force_draw_cover_art || cover_art.protocol_type() != ProtocolType::Halfblocks
 }
 
 fn progress_label(app: &AppState) -> String {

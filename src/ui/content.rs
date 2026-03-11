@@ -1,22 +1,19 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState, Wrap},
-    Frame,
 };
 
 use crate::{
     app::{AppState, Focus, Route},
-    ui::{
-        theme::Theme,
-        widgets::{header_style, pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
-    },
+    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let view = app.current_content();
-    let block = pane_block(view.title.as_str(), app.focus == Focus::Content);
+    let block = pane_block(view.title.as_str(), app.focus == Focus::Content, app);
     let inner = block.inner(area);
     let visible_columns = visible_column_indices(app.route);
 
@@ -31,7 +28,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
         let mut meta = Vec::new();
         if !view.state_label.trim().is_empty() {
-            meta.push(Span::styled(view.state_label.clone(), header_style()));
+            meta.push(Span::styled(view.state_label.clone(), header_style(app)));
         }
         if let Some(help_message) = view
             .help_message
@@ -43,7 +40,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             }
             meta.push(Span::styled(
                 help_message.clone(),
-                Style::default().fg(Theme::default().muted),
+                Style::default().fg(app.theme().inactive),
             ));
         }
         if !meta.is_empty() {
@@ -91,10 +88,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
                 .map(Cell::from)
                 .collect::<Vec<_>>(),
         )
-        .style(header_style());
+        .style(header_style(app));
         let table = Table::new(rows, column_constraints(visible_columns))
             .header(header)
-            .row_highlight_style(selected_row_style())
+            .row_highlight_style(selected_row_style(app))
             .column_spacing(1)
             .highlight_symbol(HIGHLIGHT_SYMBOL);
 
