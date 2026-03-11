@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent};
 
 use crate::{
     app::PlaybackIntent,
@@ -13,6 +13,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Paste(String),
     Tick,
     Resize {

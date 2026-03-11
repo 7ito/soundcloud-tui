@@ -5,6 +5,7 @@ pub mod auth;
 pub mod content;
 pub mod cover_art;
 pub mod error_modal;
+pub mod geometry;
 pub mod header;
 pub mod help;
 pub mod layout;

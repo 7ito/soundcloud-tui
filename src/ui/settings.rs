@@ -1,15 +1,18 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    Frame,
+    layout::Rect,
     style::Style,
     text::{Line, Span},
     widgets::{Clear, List, ListItem, ListState, Paragraph, Tabs},
-    Frame,
 };
 
 use crate::{
     app::{AppState, SettingsTab, SettingsValue},
     config::settings::KeyAction,
-    ui::widgets::{header_style, pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
+    ui::{
+        geometry,
+        widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+    },
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -17,23 +20,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         return;
     };
 
-    let overlay = Layout::default()
-        .margin(1)
-        .constraints([Constraint::Min(1)])
-        .split(area)[0];
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(3),
-        ])
-        .split(overlay);
+    let layout = geometry::settings_layout(area);
 
     frame.render_widget(Clear, area);
-    render_tabs(frame, sections[0], app);
-    render_list(frame, sections[1], app);
-    render_footer(frame, sections[2], app);
+    render_tabs(frame, layout.tabs, app);
+    render_list(frame, layout.list, app);
+    render_footer(frame, layout.footer, app);
 }
 
 fn render_tabs(frame: &mut Frame<'_>, area: Rect, app: &AppState) {

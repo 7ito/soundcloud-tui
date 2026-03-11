@@ -36,6 +36,11 @@ impl EventHandler {
                                 break;
                             }
                         }
+                        Ok(CrosstermEvent::Mouse(mouse)) => {
+                            if input_sender.send(AppEvent::Mouse(mouse)).is_err() {
+                                break;
+                            }
+                        }
                         Ok(CrosstermEvent::Paste(text)) => {
                             if input_sender.send(AppEvent::Paste(text)).is_err() {
                                 break;

@@ -1,12 +1,15 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use chrono::Utc;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
     app::{
         Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
-        RepeatMode, Route, SettingsMenuState, reducer,
+        RepeatMode, Route, SettingsMenuState, SettingsTab, reducer,
     },
     config::{
         credentials::Credentials,
@@ -24,7 +27,7 @@ use crate::{
         },
         paging::Page,
     },
-    ui::theme::Theme,
+    ui::{geometry, theme::Theme, widgets::pane_inner},
 };
 
 #[derive(Debug, Clone)]
@@ -46,6 +49,7 @@ pub struct AppState {
     pub status: String,
     pub tick_count: u64,
     pub viewport: Viewport,
+    last_mouse_click: Option<MouseClickState>,
     pub loading: Option<LoadingState>,
     pub search_query: String,
     pub search_cursor: usize,
@@ -235,6 +239,19 @@ pub struct Viewport {
     pub width: u16,
     pub height: u16,
 }
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct MouseClickState {
+    target: MouseClickTarget,
+    at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum MouseClickTarget {
+    ContentRow(Route, usize),
+}
+
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LoadingState {
@@ -479,6 +496,7 @@ impl AppState {
                 width: 0,
                 height: 0,
             },
+            last_mouse_click: None,
             loading: Some(LoadingState {
                 message: "Preparing mock library data...".to_string(),
                 ticks_remaining: 2,
@@ -576,6 +594,7 @@ impl AppState {
     pub fn dispatch_event(&mut self, event: AppEvent) {
         match event {
             AppEvent::Key(key) => self.handle_key_event(key),
+            AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
             AppEvent::Paste(text) => self.handle_paste_event(&text),
             AppEvent::Tick => self.on_tick(),
             AppEvent::Resize { width, height } => self.on_resize(width, height),
@@ -2733,6 +2752,351 @@ impl AppState {
         self.settings_menu = Some(menu);
     }
 
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        if self.mode != AppMode::Main {
+            return;
+        }
+
+        if self.error_modal.is_some() {
+            self.handle_error_modal_mouse(mouse);
+            return;
+        }
+
+        if self.show_settings() {
+            self.handle_settings_mouse(mouse);
+            return;
+        }
+
+        if self.show_help {
+            self.handle_help_mouse(mouse);
+            return;
+        }
+
+        if self.queue.overlay_visible {
+            self.handle_queue_mouse(mouse);
+            return;
+        }
+
+        if self.add_to_playlist_modal.is_some() {
+            self.handle_add_to_playlist_mouse(mouse);
+            return;
+        }
+
+        if self.show_welcome {
+            self.show_welcome = false;
+            self.status = "Closed welcome overlay.".to_string();
+        }
+
+        self.handle_main_mouse(mouse);
+    }
+
+    fn register_click(&mut self, target: MouseClickTarget) -> bool {
+        let now = Instant::now();
+        let is_double_click = self.last_mouse_click.is_some_and(|previous| {
+            previous.target == target && now.duration_since(previous.at) <= DOUBLE_CLICK_WINDOW
+        });
+        self.last_mouse_click = Some(MouseClickState { target, at: now });
+        is_double_click
+    }
+
+    fn focus_main_pane(&mut self, focus: Focus) {
+        self.set_focus(focus);
+        self.status = format!("Focused {}.", focus.label());
+    }
+
+    fn handle_error_modal_mouse(&mut self, mouse: MouseEvent) {
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            self.dismiss_error_modal();
+        }
+    }
+
+    fn handle_settings_mouse(&mut self, mouse: MouseEvent) {
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+        let layout = geometry::settings_layout(area);
+        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+            return;
+        }
+
+        let Some(mut menu) = self.settings_menu.take() else {
+            return;
+        };
+
+        if menu.editing {
+            self.settings_menu = Some(menu);
+            return;
+        }
+
+        if let Some(delta) = mouse_scroll_delta(mouse.kind) {
+            if rect_contains(layout.list, mouse.column, mouse.row) {
+                menu.move_selection(delta);
+            }
+            self.settings_menu = Some(menu);
+            return;
+        }
+
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if rect_contains(layout.tabs, mouse.column, mouse.row) {
+                if let Some(index) = geometry::settings_tab_index(layout.tabs, mouse.column) {
+                    if let Some(tab) = SettingsTab::ALL.get(index).copied() {
+                        menu.select_tab(tab);
+                    }
+                }
+            } else if rect_contains(layout.list, mouse.column, mouse.row) {
+                let items = menu.items();
+                if let Some(index) = block_list_index_at_row(
+                    layout.list,
+                    mouse.column,
+                    mouse.row,
+                    items.len(),
+                    menu.selected_index(),
+                ) {
+                    let was_selected = index == menu.selected_index();
+                    menu.set_selected_index(index);
+
+                    if was_selected {
+                        match menu.activate_selected() {
+                            Ok(_) => {
+                                self.status = format!("Editing {} settings.", menu.tab.label());
+                            }
+                            Err(error) => {
+                                self.show_main_error("Could not update setting", error.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.settings_menu = Some(menu);
+    }
+
+    fn handle_help_mouse(&mut self, mouse: MouseEvent) {
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+        let layout = geometry::help_layout(area);
+        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+            return;
+        }
+
+        if let Some(delta) = mouse_scroll_delta(mouse.kind) {
+            if rect_contains(layout.body, mouse.column, mouse.row) {
+                self.scroll_help(delta);
+            }
+        }
+    }
+
+    fn handle_queue_mouse(&mut self, mouse: MouseEvent) {
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+        let layout = geometry::queue_layout(area);
+        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+            return;
+        }
+
+        if let Some(delta) = mouse_scroll_delta(mouse.kind) {
+            if rect_contains(layout.body, mouse.column, mouse.row) {
+                self.move_queue_selection(delta > 0);
+            }
+            return;
+        }
+
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            || !rect_contains(layout.body, mouse.column, mouse.row)
+        {
+            return;
+        }
+
+        let rows = self.queue_overlay_rows();
+        if let Some(index) = table_index_at_row(
+            layout.body,
+            mouse.column,
+            mouse.row,
+            rows.len(),
+            self.queue.selected,
+        ) {
+            let was_selected = index == self.queue.selected;
+            self.queue.selected = index;
+
+            if was_selected {
+                self.play_selected_queue_track();
+            } else if let Some(row) = rows.get(index) {
+                self.status = format!("Queued {} highlighted.", row.columns[0]);
+            }
+        }
+    }
+
+    fn handle_add_to_playlist_mouse(&mut self, mouse: MouseEvent) {
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+        let layout = geometry::add_to_playlist_layout(area);
+        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+            return;
+        }
+
+        if let Some(delta) = mouse_scroll_delta(mouse.kind) {
+            if rect_contains(layout.list, mouse.column, mouse.row) {
+                self.move_add_to_playlist_selection(delta);
+            }
+            return;
+        }
+
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            || !rect_contains(layout.list, mouse.column, mouse.row)
+        {
+            return;
+        }
+
+        let Some(current) = self
+            .add_to_playlist_modal
+            .as_ref()
+            .map(|modal| modal.selected_playlist)
+        else {
+            return;
+        };
+
+        if let Some(index) = plain_list_index_at_row(
+            layout.list,
+            mouse.column,
+            mouse.row,
+            self.playlists.len(),
+            current,
+        ) {
+            let was_selected = index == current;
+            if let Some(modal) = self.add_to_playlist_modal.as_mut() {
+                modal.selected_playlist = index;
+            }
+
+            if was_selected {
+                self.confirm_add_to_playlist_selection();
+            } else if let Some(playlist) = self.playlists.get(index) {
+                self.status = format!("Selected playlist {}.", playlist.title);
+            }
+        }
+    }
+
+    fn handle_main_mouse(&mut self, mouse: MouseEvent) {
+        let Some(layout) = geometry::main_layout_from_viewport(self) else {
+            return;
+        };
+
+        if let Some(delta) = mouse_scroll_delta(mouse.kind) {
+            if rect_contains(layout.library, mouse.column, mouse.row) {
+                self.focus_main_pane(Focus::Library);
+                self.apply(if delta > 0 {
+                    Action::MoveDown
+                } else {
+                    Action::MoveUp
+                });
+            } else if rect_contains(layout.playlists, mouse.column, mouse.row) {
+                self.focus_main_pane(Focus::Playlists);
+                self.apply(if delta > 0 {
+                    Action::MoveDown
+                } else {
+                    Action::MoveUp
+                });
+            } else if rect_contains(layout.content, mouse.column, mouse.row) {
+                self.focus_main_pane(Focus::Content);
+                self.apply(if delta > 0 {
+                    Action::MoveDown
+                } else {
+                    Action::MoveUp
+                });
+            }
+            return;
+        }
+
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+
+        if rect_contains(layout.search, mouse.column, mouse.row) {
+            self.begin_search_input();
+            return;
+        }
+
+        if rect_contains(layout.help, mouse.column, mouse.row) {
+            self.help_scroll = 0;
+            self.show_help = true;
+            self.status = "Showing help menu.".to_string();
+            return;
+        }
+
+        if rect_contains(layout.settings, mouse.column, mouse.row) {
+            self.open_settings_menu();
+            return;
+        }
+
+        if let Some(index) = block_list_index_at_row(
+            layout.library,
+            mouse.column,
+            mouse.row,
+            self.library_items.len(),
+            self.selected_library,
+        ) {
+            self.focus_main_pane(Focus::Library);
+            self.selected_library = index;
+            self.sync_route_from_library();
+            return;
+        }
+
+        if rect_contains(layout.library, mouse.column, mouse.row) {
+            self.focus_main_pane(Focus::Library);
+            return;
+        }
+
+        if let Some(index) = block_list_index_at_row(
+            layout.playlists,
+            mouse.column,
+            mouse.row,
+            self.playlists.len(),
+            self.selected_playlist,
+        ) {
+            self.focus_main_pane(Focus::Playlists);
+            self.selected_playlist = index;
+            self.sync_route_from_playlist();
+            return;
+        }
+
+        if rect_contains(layout.playlists, mouse.column, mouse.row) {
+            self.focus_main_pane(Focus::Playlists);
+            return;
+        }
+
+        let content_layout = geometry::content_layout(layout.content, self);
+        if let Some(index) = table_index_at_row(
+            content_layout.body,
+            mouse.column,
+            mouse.row,
+            self.current_content_len(),
+            self.selected_content,
+        ) {
+            let activate_selected =
+                self.register_click(MouseClickTarget::ContentRow(self.route, index));
+            self.focus_main_pane(Focus::Content);
+            self.selected_content = index;
+            if activate_selected {
+                self.select_current_content();
+            } else if let Some(label) = self.current_selection_label() {
+                self.status = format!("Highlighted {}.", label);
+            }
+            return;
+        }
+
+        if rect_contains(layout.content, mouse.column, mouse.row) {
+            self.focus_main_pane(Focus::Content);
+            return;
+        }
+
+        if rect_contains(layout.playbar, mouse.column, mouse.row) {
+            self.focus_main_pane(Focus::Playbar);
+        }
+    }
+
     fn handle_key_event(&mut self, key: KeyEvent) {
         if is_global_quit_key(key) {
             self.should_quit = true;
@@ -4490,6 +4854,85 @@ fn playlist_summary_subtitle(playlist: &SoundcloudPlaylist) -> String {
     } else {
         format!("By {} - {}", playlist.creator, playlist.track_count_label())
     }
+}
+
+fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_scroll_delta(kind: MouseEventKind) -> Option<isize> {
+    match kind {
+        MouseEventKind::ScrollDown => Some(1),
+        MouseEventKind::ScrollUp => Some(-1),
+        _ => None,
+    }
+}
+
+fn block_list_index_at_row(
+    area: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+    len: usize,
+    selected: usize,
+) -> Option<usize> {
+    row_index_at(pane_inner(area), column, row, len, selected, 0)
+}
+
+fn plain_list_index_at_row(
+    area: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+    len: usize,
+    selected: usize,
+) -> Option<usize> {
+    row_index_at(area, column, row, len, selected, 0)
+}
+
+fn table_index_at_row(
+    area: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+    len: usize,
+    selected: usize,
+) -> Option<usize> {
+    row_index_at(area, column, row, len, selected, 1)
+}
+
+fn row_index_at(
+    area: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+    len: usize,
+    selected: usize,
+    header_rows: u16,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+
+    if column < area.x || column >= area.x.saturating_add(area.width) {
+        return None;
+    }
+
+    let start_row = area.y.saturating_add(header_rows);
+    if row < start_row || row >= area.y.saturating_add(area.height) {
+        return None;
+    }
+
+    let visible_rows = area.height.saturating_sub(header_rows) as usize;
+    if visible_rows == 0 {
+        return None;
+    }
+
+    let start_index = selected
+        .min(len.saturating_sub(1))
+        .saturating_sub(visible_rows.saturating_sub(1));
+    let index = start_index + row.saturating_sub(start_row) as usize;
+
+    (index < len).then_some(index)
 }
 
 fn help_row(

@@ -1,4 +1,5 @@
 use ratatui::{
+    layout::Rect,
     style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, Padding},
 };
@@ -21,6 +22,13 @@ pub fn pane_block<'a>(title: &'a str, is_active: bool, app: &AppState) -> Block<
         .padding(Padding::horizontal(1))
         .title(title)
         .border_style(border_style)
+}
+
+pub fn pane_inner(area: Rect) -> Rect {
+    Block::default()
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1))
+        .inner(area)
 }
 
 pub fn selected_row_style(app: &AppState) -> Style {

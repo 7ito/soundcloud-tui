@@ -1,28 +1,24 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     text::Line,
     widgets::{Cell, Clear, Paragraph, Row, Table},
 };
 
 use crate::{
     app::{AppState, HelpRow},
-    ui::widgets::{header_style, pane_block},
+    ui::{
+        geometry,
+        widgets::{header_style, pane_block},
+    },
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let overlay = Layout::default()
-        .constraints([Constraint::Min(1)])
-        .margin(1)
-        .split(area)[0];
+    let layout = geometry::help_layout(area);
+    let overlay = layout.overlay;
     let block = pane_block("Help (press <Esc> to go back)", true, app);
-    let inner = block.inner(overlay);
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
     let rows = app.help_rows();
-    let visible_rows = sections[0].height.saturating_sub(1).max(1) as usize;
+    let visible_rows = layout.body.height.saturating_sub(1).max(1) as usize;
     let scroll = app.help_scroll.min(rows.len().saturating_sub(visible_rows));
     let widths = [
         Constraint::Percentage(41),
@@ -35,7 +31,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         .iter()
         .skip(scroll)
         .take(visible_rows)
-        .map(|row| render_row(row, sections[0].width));
+        .map(|row| render_row(row, layout.body.width));
     let visible_end = (scroll + visible_rows).min(rows.len());
     let footer = Paragraph::new(Line::from(format!(
         "{}-{} of {}",
@@ -48,8 +44,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(block, overlay);
-    frame.render_widget(table, sections[0]);
-    frame.render_widget(footer, sections[1]);
+    frame.render_widget(table, layout.body);
+    frame.render_widget(footer, layout.footer);
 }
 
 fn render_row(row: &HelpRow, width: u16) -> Row<'static> {

@@ -8,10 +8,11 @@ use std::{
 use anyhow::Result;
 use arboard::Clipboard;
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
+        size as terminal_size,
     },
 };
 use log::{info, warn};
@@ -64,6 +65,9 @@ async fn run() -> Result<()> {
         settings,
         recent_history,
     );
+    let (width, height) = terminal_size()?;
+    app.viewport.width = width;
+    app.viewport.height = height;
     if let Some(warning) = bootstrap.warning {
         app.auth.set_error(warning.clone());
         app.status = warning;
@@ -725,7 +729,12 @@ impl TerminalHandle {
         enable_raw_mode()?;
 
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture
+        )?;
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
@@ -750,6 +759,7 @@ impl Drop for TerminalHandle {
         let _ = execute!(
             self.terminal.backend_mut(),
             DisableBracketedPaste,
+            DisableMouseCapture,
             LeaveAlternateScreen
         );
         let _ = self.terminal.show_cursor();

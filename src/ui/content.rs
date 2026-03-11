@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState, Wrap},
@@ -8,13 +8,14 @@ use ratatui::{
 
 use crate::{
     app::{AppState, Focus, Route},
+    ui::geometry,
     ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let view = app.current_content();
     let block = pane_block(view.title.as_str(), app.focus == Focus::Content, app);
-    let inner = block.inner(area);
+    let layout = geometry::content_layout(area, app);
     let visible_columns = visible_column_indices(app.route);
 
     frame.render_widget(block, area);
@@ -52,20 +53,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         Vec::new()
     };
 
-    let content_area = if !summary_lines.is_empty() {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(summary_lines.len() as u16),
-                Constraint::Min(1),
-            ])
-            .split(inner);
-
+    let content_area = if let Some(summary_area) = layout.summary {
         let summary = Paragraph::new(summary_lines).wrap(Wrap { trim: true });
-        frame.render_widget(summary, chunks[0]);
-        chunks[1]
+        frame.render_widget(summary, summary_area);
+        layout.body
     } else {
-        inner
+        layout.body
     };
 
     if view.rows.is_empty() {

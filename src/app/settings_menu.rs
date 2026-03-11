@@ -189,6 +189,15 @@ impl SettingsMenuState {
         } else {
             self.tab.previous()
         };
+        self.clamp_selected_index();
+    }
+
+    pub fn select_tab(&mut self, tab: SettingsTab) {
+        self.tab = tab;
+        self.clamp_selected_index();
+    }
+
+    fn clamp_selected_index(&mut self) {
         let max_index = self.items().len().saturating_sub(1);
         if self.selected_index() > max_index {
             self.set_selected_index(max_index);

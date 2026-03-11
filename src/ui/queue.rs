@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     style::Style,
     text::Line,
     widgets::{Cell, Clear, Paragraph, Row, Table, TableState},
@@ -8,20 +8,16 @@ use ratatui::{
 
 use crate::{
     app::AppState,
-    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+    ui::{
+        geometry,
+        widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+    },
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let overlay = Layout::default()
-        .constraints([Constraint::Min(1)])
-        .margin(1)
-        .split(area)[0];
+    let layout = geometry::queue_layout(area);
+    let overlay = layout.overlay;
     let block = pane_block("Queue (press Esc to go back)", true, app);
-    let inner = block.inner(overlay);
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
     let rows = app.queue_overlay_rows();
     let header =
         Row::new(["Title", "Artist", "State", "Length"].map(Cell::from)).style(header_style(app));
@@ -55,13 +51,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     if rows.is_empty() {
         frame.render_widget(
             Paragraph::new("No queued tracks.").style(Style::default().fg(app.theme().inactive)),
-            sections[0],
+            layout.body,
         );
     } else {
         let mut state = TableState::default();
         state.select(app.queue_overlay_selection());
-        frame.render_stateful_widget(table, sections[0], &mut state);
+        frame.render_stateful_widget(table, layout.body, &mut state);
     }
 
-    frame.render_widget(footer, sections[1]);
+    frame.render_widget(footer, layout.footer);
 }

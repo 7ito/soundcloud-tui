@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use soundcloud_tui::{
     app::{AppCommand, AppEvent, AppMode, AppState, AuthFocus, AuthStep, Focus, Route},
     config::{
@@ -14,6 +14,7 @@ use soundcloud_tui::{
         models::{PlaylistSummary, SearchResults, TrackSummary, UserSummary},
         paging::Page,
     },
+    ui::{geometry, widgets::pane_inner},
 };
 
 #[test]
@@ -40,6 +41,197 @@ fn resize_event_updates_viewport() {
 
     assert_eq!(app.viewport.width, 120);
     assert_eq!(app.viewport.height, 40);
+}
+
+#[test]
+fn mouse_click_settings_header_opens_settings_menu() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(
+        layout.settings.x + 1,
+        layout.settings.y + 1,
+    )));
+
+    assert!(app.show_settings());
+}
+
+#[test]
+fn mouse_click_search_enters_search_mode() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(
+        layout.search.x + 1,
+        layout.search.y + 1,
+    )));
+
+    assert_eq!(app.focus, Focus::Search);
+}
+
+#[test]
+fn mouse_click_playbar_focuses_now_playing() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.focus = Focus::Library;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(
+        layout.playbar.x + 1,
+        layout.playbar.y + 1,
+    )));
+
+    assert_eq!(app.focus, Focus::Playbar);
+}
+
+#[test]
+fn mouse_click_selected_settings_row_starts_editing() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+
+    app.dispatch_event(AppEvent::Mouse(left_click(
+        layout.settings.x + 1,
+        layout.settings.y + 1,
+    )));
+
+    let settings_layout =
+        geometry::settings_layout(geometry::viewport_area(&app).expect("viewport"));
+    let list = pane_inner(settings_layout.list);
+    app.dispatch_event(AppEvent::Mouse(left_click(list.x, list.y)));
+
+    assert!(app.settings_menu.as_ref().expect("settings open").editing);
+}
+
+#[test]
+fn mouse_scroll_help_overlay_moves_help_scroll() {
+    let mut app = AppState::new();
+    app.dispatch_event(AppEvent::Resize {
+        width: 80,
+        height: 14,
+    });
+    app.show_help = true;
+    let layout = geometry::help_layout(geometry::viewport_area(&app).expect("viewport"));
+
+    app.dispatch_event(AppEvent::Mouse(scroll_down(
+        layout.body.x + 1,
+        layout.body.y + 2,
+    )));
+
+    assert_eq!(app.help_scroll, 1);
+}
+
+#[test]
+fn mouse_single_click_content_row_only_selects() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    let first = dummy_track("soundcloud:tracks:40", "First Track");
+    let second = dummy_track("soundcloud:tracks:41", "Second Track");
+    app.session = Some(dummy_session());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    seed_liked_tracks(&mut app, vec![first, second.clone()]);
+    app.focus = Focus::Library;
+
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+    let content = geometry::content_layout(layout.content, &app);
+    let row = content.body.y + 2;
+    let column = content.body.x + 1;
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+    assert_eq!(app.focus, Focus::Content);
+    assert_eq!(app.selected_content, 1);
+    assert_eq!(app.route, Route::LikedSongs);
+    assert!(app.take_pending_command().is_none());
+}
+
+#[test]
+fn mouse_double_click_on_content_row_plays_track() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    let first = dummy_track("soundcloud:tracks:40", "First Track");
+    let second = dummy_track("soundcloud:tracks:41", "Second Track");
+    app.session = Some(dummy_session());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    seed_liked_tracks(&mut app, vec![first, second.clone()]);
+    app.focus = Focus::Library;
+
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+    let content = geometry::content_layout(layout.content, &app);
+    let row = content.body.y + 2;
+    let column = content.body.x + 1;
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track, .. }) => assert_eq!(track.title, second.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+}
+
+#[test]
+fn mouse_double_click_library_row_keeps_library_focus() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+    let library = pane_inner(layout.library);
+    let row = library.y + 3;
+    let column = library.x + 1;
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.focus, Focus::Library);
+    assert_eq!(app.route, Route::Albums);
+}
+
+#[test]
+fn mouse_double_click_playlist_row_keeps_playlists_focus() {
+    let mut app = AppState::new();
+    app.show_welcome = false;
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    let layout = geometry::main_layout_from_viewport(&app).expect("layout");
+    let playlists = pane_inner(layout.playlists);
+    let row = playlists.y + 1;
+    let column = playlists.x + 1;
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.focus, Focus::Playlists);
+    assert_eq!(app.route, Route::Playlist);
 }
 
 #[test]
@@ -1374,6 +1566,24 @@ fn seed_search_tracks(app: &mut AppState, query: &str, tracks: Vec<TrackSummary>
     drain_pending_commands(app);
     app.focus = Focus::Content;
     app.selected_content = 0;
+}
+
+fn left_click(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn scroll_down(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
 }
 
 fn dummy_track(urn: &str, title: &str) -> TrackSummary {
