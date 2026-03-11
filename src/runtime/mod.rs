@@ -73,7 +73,8 @@ impl CommandExecutor {
                 }
             }
             AppCommand::SetWindowTitle(title) => {
-                if let Err(error) = crossterm::execute!(io::stdout(), crossterm::terminal::SetTitle(title))
+                if let Err(error) =
+                    crossterm::execute!(io::stdout(), crossterm::terminal::SetTitle(title))
                 {
                     warn!("failed to set window title: {error}");
                 }
@@ -103,7 +104,9 @@ impl CommandExecutor {
                         auth::wait_for_callback(&request.credentials.redirect_uri, &request.state)
                             .await;
                     let _ = match result {
-                        Ok(callback_input) => sender.send(AppEvent::AuthCallbackCaptured(callback_input)),
+                        Ok(callback_input) => {
+                            sender.send(AppEvent::AuthCallbackCaptured(callback_input))
+                        }
                         Err(error) => sender.send(AppEvent::AuthCallbackFailed(error.to_string())),
                     };
                 });
@@ -125,72 +128,92 @@ impl CommandExecutor {
                 session,
                 next_href,
                 append,
-            } => self.spawn_session_event(session, |error| AppEvent::FeedFailed(error.to_string()), move |service, session| async move {
-                let page = service
-                    .load_feed(&session.tokens.access_token, next_href.as_deref())
-                    .await?;
-                Ok(AppEvent::FeedLoaded {
-                    session,
-                    page,
-                    append,
-                })
-            }),
+            } => self.spawn_session_event(
+                session,
+                |error| AppEvent::FeedFailed(error.to_string()),
+                move |service, session| async move {
+                    let page = service
+                        .load_feed(&session.tokens.access_token, next_href.as_deref())
+                        .await?;
+                    Ok(AppEvent::FeedLoaded {
+                        session,
+                        page,
+                        append,
+                    })
+                },
+            ),
             AppCommand::LoadLikedSongs {
                 session,
                 next_href,
                 append,
-            } => self.spawn_session_event(session, |error| AppEvent::LikedSongsFailed(error.to_string()), move |service, session| async move {
-                let page = service
-                    .load_liked_tracks(&session.tokens.access_token, next_href.as_deref())
-                    .await?;
-                Ok(AppEvent::LikedSongsLoaded {
-                    session,
-                    page,
-                    append,
-                })
-            }),
+            } => self.spawn_session_event(
+                session,
+                |error| AppEvent::LikedSongsFailed(error.to_string()),
+                move |service, session| async move {
+                    let page = service
+                        .load_liked_tracks(&session.tokens.access_token, next_href.as_deref())
+                        .await?;
+                    Ok(AppEvent::LikedSongsLoaded {
+                        session,
+                        page,
+                        append,
+                    })
+                },
+            ),
             AppCommand::LoadAlbums {
                 session,
                 next_href,
                 append,
-            } => self.spawn_session_event(session, |error| AppEvent::AlbumsFailed(error.to_string()), move |service, session| async move {
-                let page = service
-                    .load_albums(&session.tokens.access_token, next_href.as_deref())
-                    .await?;
-                Ok(AppEvent::AlbumsLoaded {
-                    session,
-                    page,
-                    append,
-                })
-            }),
+            } => self.spawn_session_event(
+                session,
+                |error| AppEvent::AlbumsFailed(error.to_string()),
+                move |service, session| async move {
+                    let page = service
+                        .load_albums(&session.tokens.access_token, next_href.as_deref())
+                        .await?;
+                    Ok(AppEvent::AlbumsLoaded {
+                        session,
+                        page,
+                        append,
+                    })
+                },
+            ),
             AppCommand::LoadFollowing {
                 session,
                 next_href,
                 append,
-            } => self.spawn_session_event(session, |error| AppEvent::FollowingFailed(error.to_string()), move |service, session| async move {
-                let page = service
-                    .load_followings(&session.tokens.access_token, next_href.as_deref())
-                    .await?;
-                Ok(AppEvent::FollowingLoaded {
-                    session,
-                    page,
-                    append,
-                })
-            }),
+            } => self.spawn_session_event(
+                session,
+                |error| AppEvent::FollowingFailed(error.to_string()),
+                move |service, session| async move {
+                    let page = service
+                        .load_followings(&session.tokens.access_token, next_href.as_deref())
+                        .await?;
+                    Ok(AppEvent::FollowingLoaded {
+                        session,
+                        page,
+                        append,
+                    })
+                },
+            ),
             AppCommand::LoadPlaylists {
                 session,
                 next_href,
                 append,
-            } => self.spawn_session_event(session, |error| AppEvent::PlaylistsFailed(error.to_string()), move |service, session| async move {
-                let page = service
-                    .load_playlists(&session.tokens.access_token, next_href.as_deref())
-                    .await?;
-                Ok(AppEvent::PlaylistsLoaded {
-                    session,
-                    page,
-                    append,
-                })
-            }),
+            } => self.spawn_session_event(
+                session,
+                |error| AppEvent::PlaylistsFailed(error.to_string()),
+                move |service, session| async move {
+                    let page = service
+                        .load_playlists(&session.tokens.access_token, next_href.as_deref())
+                        .await?;
+                    Ok(AppEvent::PlaylistsLoaded {
+                        session,
+                        page,
+                        append,
+                    })
+                },
+            ),
             AppCommand::LoadPlaylistTracks {
                 session,
                 playlist_urn,
@@ -434,9 +457,9 @@ impl CommandExecutor {
             }
             AppCommand::ControlPlayback(command) => {
                 if let Err(error) = self.player.send(command) {
-                    let _ = self
-                        .sender
-                        .send(AppEvent::Player(PlayerEvent::BackendError(error.to_string())));
+                    let _ = self.sender.send(AppEvent::Player(PlayerEvent::BackendError(
+                        error.to_string(),
+                    )));
                 }
             }
             AppCommand::ControlVisualizer(command) => {
@@ -561,7 +584,9 @@ fn run_linux_clipboard_command(
             .map_err(|error| format!("{program}: failed writing stdin: {error}"))?;
     }
 
-    let status = child.wait().map_err(|error| format!("{program}: {error}"))?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("{program}: {error}"))?;
 
     if status.success() {
         Ok(())
