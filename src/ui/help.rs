@@ -1,8 +1,8 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::Line,
     widgets::{Cell, Clear, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::{
@@ -102,7 +102,7 @@ fn truncate(text: &str, max_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
     use crate::app::AppState;

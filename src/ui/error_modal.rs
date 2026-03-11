@@ -1,8 +1,8 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Flex, Layout, Rect},
     text::{Line, Text},
     widgets::{Clear, Paragraph, Wrap},
+    Frame,
 };
 
 use crate::{app::AppState, ui::widgets::pane_block};

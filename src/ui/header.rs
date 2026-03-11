@@ -1,13 +1,13 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Position, Rect},
     text::{Line, Span},
     widgets::Paragraph,
+    Frame,
 };
 
 use crate::{
     app::{AppState, Focus},
-    ui::widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block},
+    ui::widgets::{header_style, pane_block, HIGHLIGHT_SYMBOL},
 };
 
 pub fn render_search(frame: &mut Frame<'_>, area: Rect, app: &AppState) {

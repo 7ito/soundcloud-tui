@@ -1,16 +1,16 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState, Wrap},
+    Frame,
 };
 
 use crate::{
     app::{AppState, Focus, Route},
     ui::{
         theme::Theme,
-        widgets::{HIGHLIGHT_SYMBOL, header_style, pane_block, selected_row_style},
+        widgets::{header_style, pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
     },
 };
 

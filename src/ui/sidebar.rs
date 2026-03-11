@@ -1,12 +1,12 @@
 use ratatui::{
-    Frame,
     layout::Rect,
     widgets::{List, ListItem, ListState},
+    Frame,
 };
 
 use crate::{
     app::{AppState, Focus},
-    ui::widgets::{HIGHLIGHT_SYMBOL, pane_block, selected_row_style},
+    ui::widgets::{pane_block, selected_row_style, HIGHLIGHT_SYMBOL},
 };
 
 pub fn render_library(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
