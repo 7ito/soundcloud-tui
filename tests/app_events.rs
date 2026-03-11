@@ -456,6 +456,20 @@ fn search_input_shortcuts_edit_query() {
 }
 
 #[test]
+fn search_input_keeps_plain_w_for_typing() {
+    let mut app = AppState::new();
+    app.focus = Focus::Search;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.search_query, "w");
+    assert!(app.add_to_playlist_modal.is_none());
+}
+
+#[test]
 fn esc_in_content_returns_to_previous_pane() {
     let mut app = AppState::new();
     app.focus = Focus::Playlists;
@@ -539,6 +553,300 @@ fn copy_shortcut_queues_clipboard_command() {
 }
 
 #[test]
+fn like_shortcut_queues_track_like_for_selected_track() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:12", "Like Me");
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![track.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+    app.focus = Focus::Content;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('l'),
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::LikeTrack { track: queued, .. }) => assert_eq!(queued.title, track.title),
+        other => panic!("expected LikeTrack command, got {other:?}"),
+    }
+}
+
+#[test]
+fn playlist_shortcut_opens_modal_and_enter_queues_add() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:13", "Queue Me");
+    let playlist = dummy_playlist("soundcloud:playlists:3", "Road Trip");
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![playlist.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![track.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+    app.focus = Focus::Content;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::NONE,
+    )));
+    assert!(app.add_to_playlist_modal.is_some());
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::AddTrackToPlaylist {
+            track: queued_track,
+            playlist: queued_playlist,
+            ..
+        }) => {
+            assert_eq!(queued_track.title, track.title);
+            assert_eq!(queued_playlist.title, playlist.title);
+        }
+        other => panic!("expected AddTrackToPlaylist command, got {other:?}"),
+    }
+    assert!(app.add_to_playlist_modal.is_none());
+}
+
+#[test]
+fn playlist_modal_supports_navigation_jumps_and_cancel() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:14", "Navigate Me");
+    let playlists = vec![
+        dummy_playlist("soundcloud:playlists:10", "One"),
+        dummy_playlist("soundcloud:playlists:11", "Two"),
+        dummy_playlist("soundcloud:playlists:12", "Three"),
+    ];
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: playlists,
+            next_href: None,
+        },
+        append: false,
+    });
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![track],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+    app.focus = Focus::Content;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(
+        app.add_to_playlist_modal
+            .as_ref()
+            .expect("modal should open")
+            .selected_playlist,
+        0
+    );
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Down,
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(
+        app.add_to_playlist_modal
+            .as_ref()
+            .expect("modal should stay open")
+            .selected_playlist,
+        1
+    );
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('L'),
+        KeyModifiers::SHIFT,
+    )));
+    assert_eq!(
+        app.add_to_playlist_modal
+            .as_ref()
+            .expect("modal should stay open")
+            .selected_playlist,
+        2
+    );
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    assert!(app.add_to_playlist_modal.is_none());
+}
+
+#[test]
+fn lowercase_shortcuts_do_not_run_outside_content() {
+    let mut app = AppState::new();
+    let selected_track = dummy_track("soundcloud:tracks:18", "Selected Track");
+    let now_playing_track = dummy_track("soundcloud:tracks:19", "Now Playing Track");
+    let playlist = dummy_playlist("soundcloud:playlists:18", "Focus Test");
+    app.session = Some(dummy_session());
+    app.now_playing.track = Some(now_playing_track.clone());
+    app.now_playing.title = now_playing_track.title.clone();
+
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![playlist],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![selected_track],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+
+    for focus in [Focus::Library, Focus::Playlists, Focus::Playbar] {
+        app.focus = focus;
+
+        app.dispatch_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::NONE,
+        )));
+        app.dispatch_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::NONE,
+        )));
+
+        assert!(app.take_pending_command().is_none());
+        assert!(app.add_to_playlist_modal.is_none());
+    }
+}
+
+#[test]
+fn uppercase_like_shortcut_targets_now_playing_track() {
+    let mut app = AppState::new();
+    let selected_track = dummy_track("soundcloud:tracks:20", "Selected Track");
+    let now_playing_track = dummy_track("soundcloud:tracks:21", "Current Track");
+    app.session = Some(dummy_session());
+    app.now_playing.track = Some(now_playing_track.clone());
+    app.now_playing.title = now_playing_track.title.clone();
+
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![selected_track],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+    app.focus = Focus::Library;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('L'),
+        KeyModifiers::SHIFT,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::LikeTrack { track: queued, .. }) => {
+            assert_eq!(queued.title, now_playing_track.title)
+        }
+        other => panic!("expected LikeTrack command, got {other:?}"),
+    }
+}
+
+#[test]
+fn uppercase_playlist_shortcut_uses_now_playing_track() {
+    let mut app = AppState::new();
+    let selected_track = dummy_track("soundcloud:tracks:22", "Selected Track");
+    let now_playing_track = dummy_track("soundcloud:tracks:23", "Current Track");
+    let playlist = dummy_playlist("soundcloud:playlists:22", "Night Drive");
+    app.session = Some(dummy_session());
+    app.now_playing.track = Some(now_playing_track.clone());
+    app.now_playing.title = now_playing_track.title.clone();
+
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![playlist.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![selected_track],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+    app.focus = Focus::Playbar;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('W'),
+        KeyModifiers::SHIFT,
+    )));
+
+    let modal = app
+        .add_to_playlist_modal
+        .as_ref()
+        .expect("modal should open for now playing track");
+    assert_eq!(modal.track.title, now_playing_track.title);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::AddTrackToPlaylist {
+            track: queued_track,
+            playlist: queued_playlist,
+            ..
+        }) => {
+            assert_eq!(queued_track.title, now_playing_track.title);
+            assert_eq!(queued_playlist.title, playlist.title);
+        }
+        other => panic!("expected AddTrackToPlaylist command, got {other:?}"),
+    }
+}
+
+#[test]
 fn clipboard_copy_failure_opens_dismissible_error_modal() {
     let mut app = AppState::new();
 
@@ -588,6 +896,83 @@ fn clipboard_success_shows_temporary_toast() {
 
     app.dispatch_event(AppEvent::Tick);
     assert!(app.toast.is_none());
+}
+
+#[test]
+fn track_liked_event_refreshes_liked_songs_when_active() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:15", "Refetch Me");
+    app.session = Some(dummy_session());
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![track],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    while app.take_pending_command().is_some() {}
+
+    app.dispatch_event(AppEvent::TrackLiked {
+        session: dummy_session(),
+        track_title: "Refetch Me".to_string(),
+    });
+
+    match app.take_pending_command() {
+        Some(AppCommand::LoadLikedSongs { append, .. }) => assert!(!append),
+        other => panic!("expected LoadLikedSongs command, got {other:?}"),
+    }
+    assert_eq!(
+        app.toast.as_ref().expect("toast expected").message,
+        "Added to Liked Songs"
+    );
+}
+
+#[test]
+fn track_added_to_playlist_refreshes_sidebar_and_active_playlist() {
+    let mut app = AppState::new();
+    let playlist = dummy_playlist("soundcloud:playlists:16", "Refresh Playlist");
+    app.session = Some(dummy_session());
+
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: vec![playlist.clone()],
+            next_href: None,
+        },
+        append: false,
+    });
+    app.sync_route_from_playlist();
+    while app.take_pending_command().is_some() {}
+
+    app.dispatch_event(AppEvent::TrackAddedToPlaylist {
+        session: dummy_session(),
+        playlist_urn: playlist.urn.clone(),
+        playlist_title: playlist.title.clone(),
+        track_title: "Fresh Track".to_string(),
+        already_present: false,
+    });
+
+    match app.take_pending_command() {
+        Some(AppCommand::LoadPlaylists { append, .. }) => assert!(!append),
+        other => panic!("expected LoadPlaylists command, got {other:?}"),
+    }
+    match app.take_pending_command() {
+        Some(AppCommand::LoadPlaylistTracks {
+            playlist_urn,
+            append,
+            ..
+        }) => {
+            assert_eq!(playlist_urn, playlist.urn);
+            assert!(!append);
+        }
+        other => panic!("expected LoadPlaylistTracks command, got {other:?}"),
+    }
+    assert_eq!(
+        app.toast.as_ref().expect("toast expected").message,
+        "Added to playlist"
+    );
 }
 
 #[test]

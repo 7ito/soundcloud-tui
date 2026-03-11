@@ -5,7 +5,7 @@ use crate::{
     },
     player::command::PlayerCommand,
     soundcloud::auth::{AuthorizationRequest, AuthorizedSession},
-    soundcloud::models::TrackSummary,
+    soundcloud::models::{PlaylistSummary, TrackSummary},
 };
 
 #[derive(Debug, Clone)]
@@ -74,6 +74,15 @@ pub enum AppCommand {
         session: AuthorizedSession,
         query: String,
         next_href: String,
+    },
+    LikeTrack {
+        session: AuthorizedSession,
+        track: TrackSummary,
+    },
+    AddTrackToPlaylist {
+        session: AuthorizedSession,
+        track: TrackSummary,
+        playlist: PlaylistSummary,
     },
     CopyText {
         text: String,

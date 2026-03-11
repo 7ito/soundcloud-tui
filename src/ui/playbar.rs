@@ -15,13 +15,14 @@ use crate::{
     },
 };
 
-const CONTROLS: [&str; 8] = [
+const CONTROLS: [&str; 9] = [
     "[Prev]",
     "[Play/Pause]",
     "[Next]",
     "[Shuffle]",
     "[Repeat]",
-    "[Like]",
+    "[W Playlist]",
+    "[L Like]",
     "[Vol-]",
     "[Vol+]",
 ];

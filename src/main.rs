@@ -21,7 +21,11 @@ use soundcloud_tui::{
     config::{self, paths::AppPaths},
     input::events::EventHandler,
     player::{command::PlayerCommand, runtime::PlayerHandle},
-    soundcloud::{auth, auth::AuthorizedSession, service::SoundcloudService},
+    soundcloud::{
+        auth,
+        auth::AuthorizedSession,
+        service::{PlaylistTrackAddResult, SoundcloudService},
+    },
     ui::{self, cover_art::CoverArtRenderer},
 };
 use tokio::{sync::mpsc, task::LocalSet};
@@ -466,6 +470,62 @@ fn run_command(
                     Ok(event) => event,
                     Err(error) => AppEvent::SearchTracksPageFailed {
                         query: query_for_error,
+                        error: error.to_string(),
+                    },
+                });
+            });
+        }
+        AppCommand::LikeTrack { session, track } => {
+            tokio::spawn(async move {
+                let track_title = track.title.clone();
+                let result =
+                    execute_session_command(paths, session, move |service, session| async move {
+                        service
+                            .like_track(&session.tokens.access_token, &track)
+                            .await?;
+                        Ok(AppEvent::TrackLiked {
+                            session,
+                            track_title: track.title,
+                        })
+                    })
+                    .await;
+                let _ = sender.send(match result {
+                    Ok(event) => event,
+                    Err(error) => AppEvent::TrackLikeFailed {
+                        track_title,
+                        error: error.to_string(),
+                    },
+                });
+            });
+        }
+        AppCommand::AddTrackToPlaylist {
+            session,
+            track,
+            playlist,
+        } => {
+            tokio::spawn(async move {
+                let track_title = track.title.clone();
+                let playlist_title = playlist.title.clone();
+                let playlist_urn = playlist.urn.clone();
+                let result =
+                    execute_session_command(paths, session, move |service, session| async move {
+                        let outcome = service
+                            .add_track_to_playlist(&session.tokens.access_token, &playlist, &track)
+                            .await?;
+                        Ok(AppEvent::TrackAddedToPlaylist {
+                            session,
+                            playlist_urn,
+                            playlist_title: playlist.title,
+                            track_title: track.title,
+                            already_present: outcome == PlaylistTrackAddResult::AlreadyPresent,
+                        })
+                    })
+                    .await;
+                let _ = sender.send(match result {
+                    Ok(event) => event,
+                    Err(error) => AppEvent::TrackAddToPlaylistFailed {
+                        playlist_title,
+                        track_title,
                         error: error.to_string(),
                     },
                 });

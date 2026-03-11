@@ -35,6 +35,7 @@ pub struct AppState {
     pub show_help: bool,
     pub show_welcome: bool,
     pub error_modal: Option<ErrorModal>,
+    pub add_to_playlist_modal: Option<AddToPlaylistModal>,
     pub toast: Option<Toast>,
     pub help_scroll: usize,
     pub auth: AuthState,
@@ -139,6 +140,12 @@ pub struct HelpRow {
 pub struct ErrorModal {
     pub title: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AddToPlaylistModal {
+    pub track: TrackSummary,
+    pub selected_playlist: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -265,7 +272,7 @@ struct SearchCache {
     users: CollectionState<UserSummary>,
 }
 
-const HELP_ROWS: [HelpRow; 24] = [
+const HELP_ROWS: [HelpRow; 28] = [
     HelpRow {
         description: "Move focus to next pane",
         event: "Tab",
@@ -304,6 +311,26 @@ const HELP_ROWS: [HelpRow; 24] = [
     HelpRow {
         description: "Pause/Resume playback",
         event: "Space",
+        context: "General",
+    },
+    HelpRow {
+        description: "Add selected track to playlist",
+        event: "w",
+        context: "Content",
+    },
+    HelpRow {
+        description: "Add selected track to Liked Songs",
+        event: "l",
+        context: "Content",
+    },
+    HelpRow {
+        description: "Add current now playing track to playlist",
+        event: "W",
+        context: "General",
+    },
+    HelpRow {
+        description: "Add current now playing track to Liked Songs",
+        event: "L",
         context: "General",
     },
     HelpRow {
@@ -604,12 +631,13 @@ impl AppState {
             show_help: false,
             show_welcome: true,
             error_modal: None,
+            add_to_playlist_modal: None,
             toast: None,
             help_scroll: 0,
             auth: AuthState::new(Credentials::default()),
             session: None,
             auth_summary: "Unauthenticated".to_string(),
-            status: "Tab cycles panes, / opens search, arrows move, Enter selects, ? opens help, q quits."
+            status: "Tab cycles panes, / opens search, w/l use selected track, W/L use now playing, ? opens help, q quits."
                 .to_string(),
             tick_count: 0,
             viewport: Viewport {
@@ -976,6 +1004,52 @@ impl AppState {
                 self.search_tracks.fail(error.clone());
                 self.show_main_error("Could not load more search results", error);
             }
+            AppEvent::TrackLiked {
+                session,
+                track_title,
+            } => {
+                self.session = Some(session);
+                self.invalidate_liked_tracks();
+                self.status = format!("Added {track_title} to Liked Songs.");
+                self.show_toast("Added to Liked Songs");
+            }
+            AppEvent::TrackLikeFailed { track_title, error } => {
+                self.show_main_error(
+                    "Could not add track to Liked Songs",
+                    format!("Could not add {track_title} to Liked Songs.\n\n{error}"),
+                );
+            }
+            AppEvent::TrackAddedToPlaylist {
+                session,
+                playlist_urn,
+                playlist_title,
+                track_title,
+                already_present,
+            } => {
+                self.session = Some(session);
+                self.add_to_playlist_modal = None;
+                self.invalidate_playlists_sidebar();
+                self.invalidate_playlist_tracks(&playlist_urn);
+                if already_present {
+                    self.status = format!("{track_title} is already in {playlist_title}.");
+                    self.show_toast("Already in playlist");
+                } else {
+                    self.bump_playlist_track_count(&playlist_urn);
+                    self.status = format!("Added {track_title} to {playlist_title}.");
+                    self.show_toast("Added to playlist");
+                }
+            }
+            AppEvent::TrackAddToPlaylistFailed {
+                playlist_title,
+                track_title,
+                error,
+            } => {
+                self.add_to_playlist_modal = None;
+                self.show_main_error(
+                    "Could not add track to playlist",
+                    format!("Could not add {track_title} to {playlist_title}.\n\n{error}"),
+                );
+            }
             AppEvent::ClipboardCopied { label } => {
                 self.status = format!("Copied {} URL to the clipboard.", label);
                 self.show_toast("Copied URL to clipboard");
@@ -1328,7 +1402,7 @@ impl AppState {
         if self.show_help {
             "Esc closes help | Ctrl+d/u scroll | ? toggles"
         } else {
-            "? help | / search | Tab panes | j/k move | Enter select | q quit"
+            "? help | / search | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit"
         }
     }
 
@@ -2127,6 +2201,7 @@ impl AppState {
     }
 
     fn show_error_modal(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.add_to_playlist_modal = None;
         self.error_modal = Some(ErrorModal {
             title: title.into(),
             message: message.into(),
@@ -2156,6 +2231,111 @@ impl AppState {
             KeyCode::Esc | KeyCode::Enter => self.dismiss_error_modal(),
             _ => {}
         }
+    }
+
+    fn dismiss_add_to_playlist_modal(&mut self) {
+        self.add_to_playlist_modal = None;
+        self.status = "Cancelled add to playlist.".to_string();
+    }
+
+    fn handle_add_to_playlist_modal_key(&mut self, key: KeyEvent) {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _)
+            | (KeyCode::Char('q'), KeyModifiers::NONE)
+            | (KeyCode::Char('q'), KeyModifiers::SHIFT) => self.dismiss_add_to_playlist_modal(),
+            (KeyCode::Enter, _) => self.confirm_add_to_playlist_selection(),
+            (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                self.move_add_to_playlist_selection(1)
+            }
+            (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                self.move_add_to_playlist_selection(-1)
+            }
+            (KeyCode::Char('H'), _) => self.jump_add_to_playlist_selection(0),
+            (KeyCode::Char('M'), _) => {
+                self.jump_add_to_playlist_selection(self.playlists.len().saturating_sub(1) / 2)
+            }
+            (KeyCode::Char('L'), _) => {
+                self.jump_add_to_playlist_selection(self.playlists.len().saturating_sub(1))
+            }
+            _ => {}
+        }
+    }
+
+    fn move_add_to_playlist_selection(&mut self, delta: isize) {
+        let Some(current) = self
+            .add_to_playlist_modal
+            .as_ref()
+            .map(|modal| modal.selected_playlist)
+        else {
+            return;
+        };
+
+        if self.playlists.is_empty() {
+            self.status = "No playlists are available yet.".to_string();
+            return;
+        }
+
+        let max_index = self.playlists.len().saturating_sub(1);
+        let next = (current as isize + delta).clamp(0, max_index as isize) as usize;
+        if let Some(modal) = self.add_to_playlist_modal.as_mut() {
+            modal.selected_playlist = next;
+        }
+
+        if next == current && delta > 0 {
+            let _ = self.maybe_queue_more_playlists();
+        }
+
+        if let Some(playlist) = self.playlists.get(next) {
+            self.status = format!("Selected playlist {}.", playlist.title);
+        }
+    }
+
+    fn jump_add_to_playlist_selection(&mut self, index: usize) {
+        if self.playlists.is_empty() {
+            self.status = "No playlists are available yet.".to_string();
+            return;
+        }
+
+        let next = index.min(self.playlists.len().saturating_sub(1));
+        if let Some(modal) = self.add_to_playlist_modal.as_mut() {
+            modal.selected_playlist = next;
+        }
+
+        if let Some(playlist) = self.playlists.get(next) {
+            self.status = format!("Selected playlist {}.", playlist.title);
+        }
+    }
+
+    fn confirm_add_to_playlist_selection(&mut self) {
+        let Some(modal) = self.add_to_playlist_modal.clone() else {
+            return;
+        };
+
+        let Some(session) = self.session.clone() else {
+            self.dismiss_add_to_playlist_modal();
+            return;
+        };
+
+        let Some(playlist_urn) = self
+            .playlists
+            .get(modal.selected_playlist)
+            .and_then(|playlist| playlist.urn.as_deref())
+        else {
+            self.status = "Select a playlist first.".to_string();
+            return;
+        };
+        let Some(playlist) = self.known_playlists.get(playlist_urn).cloned() else {
+            self.status = "The selected playlist details are not available yet.".to_string();
+            return;
+        };
+
+        self.add_to_playlist_modal = None;
+        self.status = format!("Adding {} to {}...", modal.track.title, playlist.title);
+        self.queue_command(AppCommand::AddTrackToPlaylist {
+            session,
+            track: modal.track,
+            playlist,
+        });
     }
 
     fn max_help_scroll(&self) -> usize {
@@ -2270,6 +2450,11 @@ impl AppState {
                     return;
                 }
 
+                if self.add_to_playlist_modal.is_some() {
+                    self.handle_add_to_playlist_modal_key(key);
+                    return;
+                }
+
                 if self.show_welcome {
                     self.show_welcome = false;
                 }
@@ -2315,6 +2500,22 @@ impl AppState {
         match (key.code, key.modifiers) {
             (KeyCode::Char('/'), KeyModifiers::NONE) => {
                 self.begin_search_input();
+                true
+            }
+            (KeyCode::Char('w'), KeyModifiers::NONE) if self.focus == Focus::Content => {
+                self.open_add_to_playlist_modal_for_selected_track();
+                true
+            }
+            (KeyCode::Char('l'), KeyModifiers::NONE) if self.focus == Focus::Content => {
+                self.like_selected_track();
+                true
+            }
+            (KeyCode::Char('W'), KeyModifiers::SHIFT) => {
+                self.open_add_to_playlist_modal_for_now_playing();
+                true
+            }
+            (KeyCode::Char('L'), KeyModifiers::SHIFT) => {
+                self.like_now_playing_track();
                 true
             }
             (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => {
@@ -2495,6 +2696,95 @@ impl AppState {
         self.set_focus(Focus::Search);
         self.search_cursor = self.search_query.chars().count();
         self.status = "Editing search query. Press Enter to search.".to_string();
+    }
+
+    fn selected_track_shortcut_target(&self) -> Option<TrackSummary> {
+        if self.focus != Focus::Content {
+            return None;
+        }
+
+        match self.current_selected_content() {
+            Some(SelectedContent::Track { track, .. }) => Some(track),
+            _ => None,
+        }
+    }
+
+    fn now_playing_shortcut_target(&self) -> Option<TrackSummary> {
+        self.now_playing.track.clone()
+    }
+
+    fn open_add_to_playlist_modal_for_selected_track(&mut self) {
+        let track = self.selected_track_shortcut_target();
+        self.open_add_to_playlist_modal(track, "Select a track first.");
+    }
+
+    fn open_add_to_playlist_modal_for_now_playing(&mut self) {
+        let track = self.now_playing_shortcut_target();
+        self.open_add_to_playlist_modal(track, "Nothing is playing right now.");
+    }
+
+    fn open_add_to_playlist_modal(
+        &mut self,
+        track: Option<TrackSummary>,
+        missing_track_message: &str,
+    ) {
+        let Some(track) = track else {
+            self.status = missing_track_message.to_string();
+            return;
+        };
+
+        if self.session.is_none() {
+            self.status = "Connect to SoundCloud before editing playlists.".to_string();
+            return;
+        }
+
+        if self.playlists_loading && self.playlists.is_empty() {
+            self.status = "Playlists are still loading. Try again in a moment.".to_string();
+            return;
+        }
+
+        if self.playlists.is_empty() {
+            if !self.playlists_loaded || self.playlists_error.is_some() {
+                self.invalidate_playlists_sidebar();
+                self.status = "Loading playlists before opening the playlist picker...".to_string();
+            } else {
+                self.status = "No playlists are available for this account yet.".to_string();
+            }
+            return;
+        }
+
+        self.add_to_playlist_modal = Some(AddToPlaylistModal {
+            track: track.clone(),
+            selected_playlist: self
+                .selected_playlist
+                .min(self.playlists.len().saturating_sub(1)),
+        });
+        self.status = format!("Choose a playlist for {}.", track.title);
+    }
+
+    fn like_selected_track(&mut self) {
+        let track = self.selected_track_shortcut_target();
+        self.like_track(track, "Select a track first.");
+    }
+
+    fn like_now_playing_track(&mut self) {
+        let track = self.now_playing_shortcut_target();
+        self.like_track(track, "Nothing is playing right now.");
+    }
+
+    fn like_track(&mut self, track: Option<TrackSummary>, missing_track_message: &str) {
+        let Some(track) = track else {
+            self.status = missing_track_message.to_string();
+            return;
+        };
+
+        let Some(session) = self.session.clone() else {
+            self.status = "Connect to SoundCloud before liking tracks.".to_string();
+            return;
+        };
+
+        self.status = format!("Adding {} to Liked Songs...", track.title);
+        self.queue_command(AppCommand::LikeTrack { session, track });
     }
 
     fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
@@ -2823,6 +3113,39 @@ impl AppState {
         }
     }
 
+    fn invalidate_liked_tracks(&mut self) {
+        self.liked_tracks = CollectionState::default();
+        if self.route == Route::LikedSongs {
+            self.request_route_load(false);
+        }
+    }
+
+    fn invalidate_playlists_sidebar(&mut self) {
+        self.playlists_loading = false;
+        self.playlists_loaded = false;
+        self.playlists_error = None;
+        self.playlists_next_href = None;
+        self.playlists.clear();
+        self.request_playlists_load(false);
+    }
+
+    fn invalidate_playlist_tracks(&mut self, playlist_urn: &str) {
+        self.playlist_tracks
+            .insert(playlist_urn.to_string(), CollectionState::default());
+
+        if self.active_playlist_urn.as_deref() == Some(playlist_urn)
+            && self.route == Route::Playlist
+        {
+            self.request_route_load(false);
+        }
+    }
+
+    fn bump_playlist_track_count(&mut self, playlist_urn: &str) {
+        if let Some(playlist) = self.known_playlists.get_mut(playlist_urn) {
+            playlist.track_count = playlist.track_count.saturating_add(1);
+        }
+    }
+
     fn reset_live_data(&mut self) {
         self.playlists.clear();
         self.playlists_loading = false;
@@ -2847,6 +3170,7 @@ impl AppState {
         self.search_cache.clear();
         self.selected_playlist = 0;
         self.selected_content = 0;
+        self.add_to_playlist_modal = None;
         self.queue = QueueState::default();
         self.player = PlayerState {
             status: PlaybackStatus::Stopped,

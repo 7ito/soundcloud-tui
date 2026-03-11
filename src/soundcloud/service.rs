@@ -1,5 +1,6 @@
-use anyhow::Result;
-use serde::Deserialize;
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::soundcloud::{
     client::SoundcloudClient,
@@ -17,6 +18,12 @@ const PAGE_SIZE: usize = 50;
 pub struct ResolvedStream {
     pub url: String,
     pub preview: bool,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PlaylistTrackAddResult {
+    Added,
+    AlreadyPresent,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +89,47 @@ struct ApiStreams {
     http_mp3_128_url: Option<String>,
     hls_mp3_128_url: Option<String>,
     preview_mp3_128_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiPlaylistDetail {
+    tracks: Vec<ApiPlaylistTrackRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiPlaylistTrackRef {
+    id: Option<Value>,
+    urn: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistRequestById {
+    playlist: UpdatePlaylistTracksById,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistTracksById {
+    tracks: Vec<UpdatePlaylistTrackById>,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistTrackById {
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistRequestByUrn {
+    playlist: UpdatePlaylistTracksByUrn,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistTracksByUrn {
+    tracks: Vec<UpdatePlaylistTrackByUrn>,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdatePlaylistTrackByUrn {
+    urn: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -389,6 +437,98 @@ impl SoundcloudService {
         )
     }
 
+    pub async fn like_track(&self, access_token: &str, track: &TrackSummary) -> Result<()> {
+        let track_id = soundcloud_identifier_suffix(&track.urn)?;
+        let path = format!("/likes/tracks/{track_id}");
+        self.client.post_empty(&path, access_token).await
+    }
+
+    pub async fn add_track_to_playlist(
+        &self,
+        access_token: &str,
+        playlist: &PlaylistSummary,
+        track: &TrackSummary,
+    ) -> Result<PlaylistTrackAddResult> {
+        let playlist_id = soundcloud_identifier_suffix(&playlist.urn)?;
+        let path = format!("/playlists/{playlist_id}");
+        let detail: ApiPlaylistDetail = self
+            .client
+            .get(&path, access_token, &[("show_tracks", "true".to_string())])
+            .await?;
+
+        let mut track_urns = detail
+            .tracks
+            .into_iter()
+            .map(api_playlist_track_urn)
+            .collect::<Result<Vec<_>>>()?;
+
+        if track_urns.contains(&track.urn) {
+            return Ok(PlaylistTrackAddResult::AlreadyPresent);
+        }
+
+        track_urns.push(track.urn.clone());
+        self.update_playlist_tracks(access_token, &path, &track_urns)
+            .await?;
+        Ok(PlaylistTrackAddResult::Added)
+    }
+
+    async fn update_playlist_tracks(
+        &self,
+        access_token: &str,
+        path: &str,
+        track_urns: &[String],
+    ) -> Result<()> {
+        let track_ids = track_urns
+            .iter()
+            .map(|urn| soundcloud_identifier_suffix(urn))
+            .collect::<Result<Vec<_>>>()?;
+
+        let id_body = UpdatePlaylistRequestById {
+            playlist: UpdatePlaylistTracksById {
+                tracks: track_ids
+                    .iter()
+                    .cloned()
+                    .map(|id| UpdatePlaylistTrackById { id })
+                    .collect(),
+            },
+        };
+
+        if self
+            .client
+            .put_json(path, access_token, &id_body)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        let urn_body = UpdatePlaylistRequestByUrn {
+            playlist: UpdatePlaylistTracksByUrn {
+                tracks: track_urns
+                    .iter()
+                    .cloned()
+                    .map(|urn| UpdatePlaylistTrackByUrn { urn })
+                    .collect(),
+            },
+        };
+
+        if self
+            .client
+            .put_json(path, access_token, &urn_body)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        let form_fields = track_ids
+            .into_iter()
+            .map(|id| ("playlist[tracks][][id]".to_string(), id))
+            .collect::<Vec<_>>();
+
+        self.client.put_form(path, access_token, &form_fields).await
+    }
+
     async fn fetch_track_page(
         &self,
         access_token: &str,
@@ -492,5 +632,80 @@ fn normalize_track_access(access: String) -> TrackAccess {
         "preview" => TrackAccess::Preview,
         "blocked" => TrackAccess::Blocked,
         _ => TrackAccess::Unknown(access),
+    }
+}
+
+fn api_playlist_track_urn(track: ApiPlaylistTrackRef) -> Result<String> {
+    track
+        .urn
+        .or_else(|| {
+            track.id.and_then(|id| {
+                soundcloud_identifier_from_value(&id)
+                    .map(|identifier| format!("soundcloud:tracks:{identifier}"))
+            })
+        })
+        .ok_or_else(|| anyhow!("SoundCloud playlist response did not include track identifiers"))
+}
+
+fn soundcloud_identifier_suffix(urn: &str) -> Result<String> {
+    urn.rsplit(':')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("SoundCloud urn '{urn}' is missing an identifier suffix"))
+}
+
+fn soundcloud_identifier_from_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_update_id_payload_uses_string_identifiers() {
+        let payload = UpdatePlaylistRequestById {
+            playlist: UpdatePlaylistTracksById {
+                tracks: vec![
+                    UpdatePlaylistTrackById {
+                        id: "1234567890123".to_string(),
+                    },
+                    UpdatePlaylistTrackById {
+                        id: "42".to_string(),
+                    },
+                ],
+            },
+        };
+
+        let value = serde_json::to_value(payload).expect("payload should serialize");
+        assert_eq!(value["playlist"]["tracks"][0]["id"], "1234567890123");
+        assert_eq!(value["playlist"]["tracks"][1]["id"], "42");
+    }
+
+    #[test]
+    fn playlist_track_urn_falls_back_to_id_value() {
+        let track = ApiPlaylistTrackRef {
+            id: Some(Value::String("1234567890123".to_string())),
+            urn: None,
+        };
+
+        assert_eq!(
+            api_playlist_track_urn(track).expect("urn should be derived from id"),
+            "soundcloud:tracks:1234567890123"
+        );
+    }
+
+    #[test]
+    fn identifier_suffix_returns_string_without_numeric_parsing() {
+        assert_eq!(
+            soundcloud_identifier_suffix("soundcloud:tracks:1234567890123")
+                .expect("suffix should parse"),
+            "1234567890123"
+        );
     }
 }

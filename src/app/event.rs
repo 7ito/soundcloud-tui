@@ -103,6 +103,26 @@ pub enum AppEvent {
         query: String,
         error: String,
     },
+    TrackLiked {
+        session: AuthorizedSession,
+        track_title: String,
+    },
+    TrackLikeFailed {
+        track_title: String,
+        error: String,
+    },
+    TrackAddedToPlaylist {
+        session: AuthorizedSession,
+        playlist_urn: String,
+        playlist_title: String,
+        track_title: String,
+        already_present: bool,
+    },
+    TrackAddToPlaylistFailed {
+        playlist_title: String,
+        track_title: String,
+        error: String,
+    },
     ClipboardCopied {
         label: String,
     },

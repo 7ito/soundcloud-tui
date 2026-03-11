@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod add_to_playlist_modal;
 pub mod auth;
 pub mod content;
 pub mod cover_art;
