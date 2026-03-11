@@ -1,8 +1,4 @@
-use std::{
-    io,
-    io::IsTerminal,
-    time::Duration,
-};
+use std::{io, io::IsTerminal, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
@@ -15,12 +11,11 @@ use crossterm::{
 };
 use log::{info, warn};
 use ratatui::{Terminal, backend::CrosstermBackend};
-#[cfg(all(feature = "mpris", target_os = "linux"))]
-use soundcloud_tui::integrations::mpris::MprisIntegration;
 use soundcloud_tui::{
     app::{AppEvent, AppState},
     config::{self, paths::AppPaths},
     input::events::EventHandler,
+    integrations::media_controls::MediaControlsIntegration,
     player::runtime::PlayerHandle,
     runtime::CommandExecutor,
     soundcloud::auth,
@@ -87,47 +82,55 @@ async fn run() -> Result<()> {
         visualizer.clone(),
     );
 
-    #[cfg(all(feature = "mpris", target_os = "linux"))]
-    let mut mpris = match MprisIntegration::new(async_tx.clone()).await {
-        Ok(mut integration) => {
+    let mut media_controls = match MediaControlsIntegration::new(async_tx.clone()).await {
+        Ok(Some(mut integration)) => {
             if let Err(error) = integration.sync_from_app(&app).await {
-                warn!("disabling MPRIS integration after initial sync failure: {error}");
+                warn!("disabling media controls integration after initial sync failure: {error}");
                 None
             } else {
                 Some(integration)
             }
         }
+        Ok(None) => None,
         Err(error) => {
-            warn!("MPRIS integration unavailable: {error}");
+            warn!("media controls integration unavailable: {error}");
             None
         }
     };
 
     loop {
+        if let Some(integration) = media_controls.as_mut() {
+            if let Err(error) = integration.pump_main_thread() {
+                warn!(
+                    "disabling media controls integration after main-thread pump failure: {error}"
+                );
+                media_controls = None;
+            }
+        }
+
         executor.drain(&mut app);
         terminal.draw(&app)?;
 
-        let sync_mpris = tokio::select! {
+        let sync_media_controls = tokio::select! {
             maybe_event = events.next() => {
                 let Some(event) = maybe_event else { break; };
-                let sync_mpris = !matches!(event, AppEvent::VisualizerFrame(_));
+                let sync_media_controls = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
-                sync_mpris
+                sync_media_controls
             }
             maybe_async = async_rx.recv() => {
                 let Some(event) = maybe_async else { break; };
-                let sync_mpris = !matches!(event, AppEvent::VisualizerFrame(_));
+                let sync_media_controls = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
-                sync_mpris
+                sync_media_controls
             }
         };
 
-        #[cfg(all(feature = "mpris", target_os = "linux"))]
-        if sync_mpris {
-            if let Some(integration) = mpris.as_mut() {
+        if sync_media_controls {
+            if let Some(integration) = media_controls.as_mut() {
                 if let Err(error) = integration.sync_from_app(&app).await {
-                    warn!("disabling MPRIS integration after sync failure: {error}");
-                    mpris = None;
+                    warn!("disabling media controls integration after sync failure: {error}");
+                    media_controls = None;
                 }
             }
         }
