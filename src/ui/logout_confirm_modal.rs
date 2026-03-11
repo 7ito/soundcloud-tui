@@ -51,10 +51,10 @@ fn body_text<'a>(app: &AppState, modal: &'a crate::app::LogoutConfirmModal) -> T
     ]));
     lines.push(Line::from(""));
     lines.push(Line::from(
-        "This clears the saved SoundCloud session tokens on this machine.",
+        "This clears the saved SoundCloud session tokens from your OS keyring.",
     ));
     lines.push(Line::from(
-        "Your app credentials stay saved so you can sign in again quickly.",
+        "Your app credentials stay saved in your OS keyring so you can sign in again quickly.",
     ));
 
     if modal.discard_unsaved_changes {

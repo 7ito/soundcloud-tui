@@ -15,7 +15,7 @@ use tokio::{
 use url::Url;
 
 use crate::{
-    config::{credentials::Credentials, paths::AppPaths, tokens::TokenStore},
+    config::{credentials::Credentials, tokens::TokenStore},
     soundcloud::client::{AuthenticatedUser, SoundcloudClient},
 };
 
@@ -74,10 +74,10 @@ enum CallbackStatus {
     Captured,
 }
 
-pub fn bootstrap(paths: &AppPaths) -> AuthBootstrap {
+pub fn bootstrap() -> AuthBootstrap {
     let mut warning = None;
 
-    let credentials = match Credentials::load_optional(paths) {
+    let credentials = match Credentials::load_optional() {
         Ok(Some(credentials)) => credentials,
         Ok(None) => Credentials::default(),
         Err(error) => {
@@ -86,7 +86,7 @@ pub fn bootstrap(paths: &AppPaths) -> AuthBootstrap {
         }
     };
 
-    let tokens = match TokenStore::load(paths) {
+    let tokens = match TokenStore::load() {
         Ok(tokens) => tokens,
         Err(error) => {
             warning = Some(match warning {
@@ -97,6 +97,18 @@ pub fn bootstrap(paths: &AppPaths) -> AuthBootstrap {
         }
     };
 
+    let tokens = if tokens.is_some() && credentials.client_id.is_empty() {
+        warning = Some(match warning {
+            Some(existing) => format!(
+                "{existing} Found saved SoundCloud session tokens in your OS keyring without matching app credentials. Sign in again."
+            ),
+            None => "Found saved SoundCloud session tokens in your OS keyring without matching app credentials. Sign in again.".to_string(),
+        });
+        None
+    } else {
+        tokens
+    };
+
     AuthBootstrap {
         credentials,
         tokens,
@@ -105,16 +117,14 @@ pub fn bootstrap(paths: &AppPaths) -> AuthBootstrap {
 }
 
 pub async fn restore_saved_session(
-    paths: &AppPaths,
     credentials: &Credentials,
     tokens: &TokenStore,
 ) -> Result<AuthorizedSession> {
     let client = SoundcloudClient::new()?;
-    validate_or_refresh(&client, credentials, tokens, paths).await
+    validate_or_refresh(&client, credentials, tokens).await
 }
 
 pub async fn ensure_fresh_tokens(
-    paths: &AppPaths,
     credentials: &Credentials,
     tokens: &TokenStore,
 ) -> Result<TokenStore> {
@@ -128,7 +138,7 @@ pub async fn ensure_fresh_tokens(
 
     let client = SoundcloudClient::new()?;
     let refreshed = refresh_access_token(&client, credentials, tokens).await?;
-    refreshed.save(paths)?;
+    refreshed.save()?;
     Ok(refreshed)
 }
 
@@ -239,14 +249,13 @@ pub async fn wait_for_callback(redirect_uri: &str, state: &str) -> Result<String
 }
 
 pub async fn complete_authorization(
-    paths: &AppPaths,
     request: &AuthorizationRequest,
     callback_input: &str,
 ) -> Result<AuthorizedSession> {
     let code = extract_code_from_callback_input(callback_input, &request.state)?;
     let client = SoundcloudClient::new()?;
     let tokens = exchange_authorization_code(&client, request, &code).await?;
-    tokens.save(paths)?;
+    tokens.save()?;
 
     let profile = client.me(&tokens.access_token).await?;
     Ok(AuthorizedSession {
@@ -260,7 +269,6 @@ async fn validate_or_refresh(
     client: &SoundcloudClient,
     credentials: &Credentials,
     tokens: &TokenStore,
-    paths: &AppPaths,
 ) -> Result<AuthorizedSession> {
     if !tokens.expires_soon() {
         match client.me(&tokens.access_token).await {
@@ -287,7 +295,7 @@ async fn validate_or_refresh(
     }
 
     let refreshed = refresh_access_token(client, credentials, tokens).await?;
-    refreshed.save(paths)?;
+    refreshed.save()?;
 
     let profile = client.me(&refreshed.access_token).await?;
     info!("refreshed SoundCloud session for {}", profile.username);
@@ -554,7 +562,13 @@ const CALLBACK_WAITING_PAGE: &str = "<html><body><h1>SoundCloud TUI is still wai
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::config::credentials::DEFAULT_REDIRECT_URI;
+    use crate::config::secure_store::{
+        CREDENTIALS_ENTRY, MemoryBackend, TOKENS_ENTRY, with_test_backend,
+    };
 
     #[test]
     fn pkce_generation_produces_url_safe_values() {
@@ -596,5 +610,66 @@ mod tests {
 
         assert_eq!(status, CallbackStatus::Captured);
         assert!(diagnostic.is_none());
+    }
+
+    #[test]
+    fn bootstrap_reads_credentials_and_tokens_from_os_keyring() {
+        let credentials = Credentials {
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            redirect_uri: DEFAULT_REDIRECT_URI.to_string(),
+        };
+        let tokens = TokenStore {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            token_type: "Bearer".to_string(),
+            scope: Some("non-expiring".to_string()),
+            expires_at_epoch: chrono::Utc::now().timestamp() + 3600,
+        };
+        let backend = MemoryBackend::default()
+            .with_entry(
+                CREDENTIALS_ENTRY,
+                &serde_json::to_string(&credentials).expect("serialize credentials"),
+            )
+            .with_entry(
+                TOKENS_ENTRY,
+                &serde_json::to_string(&tokens).expect("serialize tokens"),
+            );
+
+        with_test_backend(Arc::new(backend), || {
+            let bootstrap = bootstrap();
+
+            assert_eq!(bootstrap.credentials, credentials);
+            assert_eq!(bootstrap.tokens, Some(tokens));
+            assert!(bootstrap.warning.is_none());
+        });
+    }
+
+    #[test]
+    fn bootstrap_ignores_tokens_without_credentials() {
+        let tokens = TokenStore {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            token_type: "Bearer".to_string(),
+            scope: None,
+            expires_at_epoch: chrono::Utc::now().timestamp() + 3600,
+        };
+        let backend = MemoryBackend::default().with_entry(
+            TOKENS_ENTRY,
+            &serde_json::to_string(&tokens).expect("serialize tokens"),
+        );
+
+        with_test_backend(Arc::new(backend), || {
+            let bootstrap = bootstrap();
+
+            assert_eq!(bootstrap.credentials, Credentials::default());
+            assert!(bootstrap.tokens.is_none());
+            assert!(
+                bootstrap
+                    .warning
+                    .expect("warning")
+                    .contains("without matching app credentials")
+            );
+        });
     }
 }

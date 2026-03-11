@@ -12,7 +12,7 @@ use tokio::{sync::mpsc, task};
 
 use crate::{
     app::{AppCommand, AppEvent, AppState},
-    config::{paths::AppPaths, tokens::TokenStore},
+    config::paths::AppPaths,
     player::{event::PlayerEvent, runtime::PlayerHandle},
     soundcloud::{
         auth,
@@ -59,12 +59,12 @@ impl CommandExecutor {
                 }
             }
             AppCommand::SaveCredentials(request) => {
-                let result = request.credentials.save(&self.paths);
+                let result = request.credentials.save();
                 let _ = match result {
                     Ok(()) => self.sender.send(AppEvent::CredentialsSaved(request)),
                     Err(error) => self
                         .sender
-                        .send(AppEvent::CredentialsSaveFailed(error.to_string())),
+                        .send(AppEvent::CredentialsSaveFailed(format_error(&error))),
                 };
             }
             AppCommand::SaveSettings(settings) => {
@@ -88,12 +88,11 @@ impl CommandExecutor {
                 credentials,
                 tokens,
             } => {
-                let paths = self.paths.clone();
                 let sender = self.sender.clone();
                 tokio::spawn(async move {
-                    let result = auth::restore_saved_session(&paths, &credentials, &tokens)
+                    let result = auth::restore_saved_session(&credentials, &tokens)
                         .await
-                        .map_err(|error| error.to_string());
+                        .map_err(|error| format_error(&error));
                     let _ = sender.send(AppEvent::AuthRestoreComplete(result));
                 });
             }
@@ -107,7 +106,9 @@ impl CommandExecutor {
                         Ok(callback_input) => {
                             sender.send(AppEvent::AuthCallbackCaptured(callback_input))
                         }
-                        Err(error) => sender.send(AppEvent::AuthCallbackFailed(error.to_string())),
+                        Err(error) => {
+                            sender.send(AppEvent::AuthCallbackFailed(format_error(&error)))
+                        }
                     };
                 });
             }
@@ -115,20 +116,21 @@ impl CommandExecutor {
                 request,
                 callback_input,
             } => {
-                let paths = self.paths.clone();
                 let sender = self.sender.clone();
                 tokio::spawn(async move {
-                    let result = auth::complete_authorization(&paths, &request, &callback_input)
+                    let result = auth::complete_authorization(&request, &callback_input)
                         .await
-                        .map_err(|error| error.to_string());
+                        .map_err(|error| format_error(&error));
                     let _ = sender.send(AppEvent::AuthCompleted(result));
                 });
             }
             AppCommand::Logout => {
-                let result = TokenStore::clear(&self.paths);
+                let result = crate::config::tokens::TokenStore::clear();
                 let _ = match result {
                     Ok(()) => self.sender.send(AppEvent::LogoutCompleted),
-                    Err(error) => self.sender.send(AppEvent::LogoutFailed(error.to_string())),
+                    Err(error) => self
+                        .sender
+                        .send(AppEvent::LogoutFailed(format_error(&error))),
                 };
             }
             AppCommand::LoadFeed {
@@ -485,10 +487,9 @@ impl CommandExecutor {
         Fut: Future<Output = Result<AppEvent>> + Send + 'static,
         E: FnOnce(anyhow::Error) -> AppEvent + Send + 'static,
     {
-        let paths = self.paths.clone();
         let sender = self.sender.clone();
         tokio::spawn(async move {
-            let event = match execute_session_command(paths, session, run).await {
+            let event = match execute_session_command(session, run).await {
                 Ok(event) => event,
                 Err(error) => on_error(error),
             };
@@ -497,17 +498,16 @@ impl CommandExecutor {
     }
 }
 
-async fn execute_session_command<F, Fut>(
-    paths: AppPaths,
-    mut session: AuthorizedSession,
-    run: F,
-) -> Result<AppEvent>
+fn format_error(error: &anyhow::Error) -> String {
+    format!("{error:#}")
+}
+
+async fn execute_session_command<F, Fut>(mut session: AuthorizedSession, run: F) -> Result<AppEvent>
 where
     F: FnOnce(SoundcloudService, AuthorizedSession) -> Fut,
     Fut: Future<Output = Result<AppEvent>>,
 {
-    session.tokens =
-        auth::ensure_fresh_tokens(&paths, &session.credentials, &session.tokens).await?;
+    session.tokens = auth::ensure_fresh_tokens(&session.credentials, &session.tokens).await?;
     let service = SoundcloudService::new()?;
     run(service, session).await
 }

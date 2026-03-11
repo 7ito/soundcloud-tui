@@ -14,13 +14,16 @@ impl AppState {
                 self.auth.set_waiting_for_browser(request.clone());
                 self.loading = None;
                 self.status =
-                    "Saved credentials locally. Authorize the app in your browser.".to_string();
+                    "Saved credentials securely in your OS keyring. Authorize the app in your browser.".to_string();
                 self.queue_command(AppCommand::OpenUrl(request.authorize_url.clone()));
                 self.queue_command(AppCommand::WaitForOAuthCallback(request));
             }
             AppEvent::CredentialsSaveFailed(error) => {
-                let message = format!("Could not save credentials locally: {error}");
+                let message = format!("Could not save credentials in your OS keyring: {error}");
                 self.auth.set_error(message.clone());
+                if let Some(hint) = crate::config::secure_store::troubleshooting_hint(&error) {
+                    self.auth.set_info(hint);
+                }
                 self.loading = None;
                 self.status = message;
             }
@@ -30,8 +33,11 @@ impl AppState {
                     self.mode = AppMode::Auth;
                     self.auth.step = crate::app::AuthStep::Credentials;
                     self.auth.set_error(error.clone());
-                    self.auth
-                        .set_info("No reusable session was found. Continue with browser login.");
+                    self.auth.set_info(
+                        crate::config::secure_store::troubleshooting_hint(&error).unwrap_or(
+                            "Could not restore the saved session. Continue with browser login.",
+                        ),
+                    );
                     self.loading = None;
                     self.status = error;
                 }
@@ -70,9 +76,14 @@ impl AppState {
             AppEvent::LogoutCompleted => self.finish_logout(),
             AppEvent::LogoutFailed(error) => {
                 self.loading = None;
+                let guidance = crate::config::secure_store::troubleshooting_hint(&error)
+                    .map(|hint| format!("\n\n{hint}"))
+                    .unwrap_or_default();
                 self.show_main_error(
                     "Could not log out",
-                    format!("Could not clear the saved SoundCloud session from disk.\n\n{error}"),
+                    format!(
+                        "Could not clear the saved SoundCloud session from your OS keyring.\n\n{error}{guidance}"
+                    ),
                 );
             }
             AppEvent::FeedLoaded {

@@ -3,6 +3,7 @@
 pub mod credentials;
 pub mod history;
 pub mod paths;
+pub mod secure_store;
 pub mod settings;
 pub mod tokens;
 

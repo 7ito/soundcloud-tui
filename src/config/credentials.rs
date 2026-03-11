@@ -1,13 +1,11 @@
-use std::fs;
-
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::paths::AppPaths;
+use crate::config::secure_store;
 
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:8974/callback";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Credentials {
     pub client_id: String,
     pub client_secret: String,
@@ -25,25 +23,27 @@ impl Default for Credentials {
 }
 
 impl Credentials {
-    pub fn load_optional(paths: &AppPaths) -> Result<Option<Self>> {
-        if !paths.credentials_file.exists() {
+    pub fn load_optional() -> Result<Option<Self>> {
+        let Some(credentials) = secure_store::load_secret::<Self>(
+            secure_store::CREDENTIALS_ENTRY,
+            "SoundCloud app credentials",
+        )?
+        else {
             return Ok(None);
-        }
-
-        let raw = fs::read_to_string(&paths.credentials_file)?;
-        let credentials: Self = toml::from_str(&raw)
-            .map_err(|error| anyhow!("invalid credentials file format: {error}"))?;
+        };
 
         credentials.validate()?;
 
         Ok(Some(credentials))
     }
 
-    pub fn save(&self, paths: &AppPaths) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
         self.validate()?;
-        let raw = toml::to_string_pretty(self)?;
-        fs::write(&paths.credentials_file, raw)?;
-        Ok(())
+        secure_store::save_secret(
+            secure_store::CREDENTIALS_ENTRY,
+            "SoundCloud app credentials",
+            self,
+        )
     }
 
     pub fn validate(&self) -> Result<()> {

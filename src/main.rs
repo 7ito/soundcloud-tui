@@ -48,7 +48,7 @@ async fn run() -> Result<()> {
 
     info!("starting soundcloud-tui auth onboarding scaffold");
 
-    let bootstrap = auth::bootstrap(&paths);
+    let bootstrap = auth::bootstrap();
 
     let mut terminal = TerminalHandle::new()?;
     let mut app = AppState::new_onboarding_with_persistence(
@@ -61,6 +61,9 @@ async fn run() -> Result<()> {
     app.viewport.height = height;
     if let Some(warning) = bootstrap.warning {
         app.auth.set_error(warning.clone());
+        if let Some(hint) = config::secure_store::troubleshooting_hint(&warning) {
+            app.auth.set_info(hint);
+        }
         app.status = warning;
     }
 

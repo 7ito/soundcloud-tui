@@ -1,11 +1,9 @@
-use std::fs;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::config::paths::AppPaths;
+use crate::config::secure_store;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TokenStore {
     pub access_token: String,
     pub refresh_token: String,
@@ -15,27 +13,28 @@ pub struct TokenStore {
 }
 
 impl TokenStore {
-    pub fn load(paths: &AppPaths) -> Result<Option<Self>> {
-        if !paths.tokens_file.exists() {
+    pub fn load() -> Result<Option<Self>> {
+        let Some(tokens) = secure_store::load_secret::<Self>(
+            secure_store::TOKENS_ENTRY,
+            "SoundCloud session tokens",
+        )?
+        else {
             return Ok(None);
-        }
+        };
 
-        let raw = fs::read_to_string(&paths.tokens_file)?;
-        let tokens = serde_json::from_str(&raw)?;
         Ok(Some(tokens))
     }
 
-    pub fn save(&self, paths: &AppPaths) -> Result<()> {
-        let raw = serde_json::to_string_pretty(self)?;
-        fs::write(&paths.tokens_file, raw)?;
-        Ok(())
+    pub fn save(&self) -> Result<()> {
+        secure_store::save_secret(
+            secure_store::TOKENS_ENTRY,
+            "SoundCloud session tokens",
+            self,
+        )
     }
 
-    pub fn clear(paths: &AppPaths) -> Result<()> {
-        if paths.tokens_file.exists() {
-            fs::remove_file(&paths.tokens_file)?;
-        }
-        Ok(())
+    pub fn clear() -> Result<()> {
+        secure_store::delete_secret(secure_store::TOKENS_ENTRY, "SoundCloud session tokens")
     }
 
     pub fn expires_soon(&self) -> bool {
