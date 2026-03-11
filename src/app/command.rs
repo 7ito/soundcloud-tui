@@ -22,6 +22,7 @@ pub enum AppCommand {
         request: AuthorizationRequest,
         callback_input: String,
     },
+    Logout,
     SaveSettings(Settings),
     SetWindowTitle(String),
     SaveHistory(RecentlyPlayedStore),

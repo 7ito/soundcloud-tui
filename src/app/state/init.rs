@@ -83,6 +83,7 @@ impl AppState {
             show_welcome: true,
             error_modal: None,
             add_to_playlist_modal: None,
+            logout_confirm_modal: None,
             toast: None,
             help_scroll: 0,
             auth: AuthState::new(Credentials::default()),

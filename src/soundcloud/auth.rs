@@ -487,7 +487,68 @@ fn random_base64_url(bytes: usize) -> String {
     URL_SAFE_NO_PAD.encode(random)
 }
 
-const CALLBACK_SUCCESS_PAGE: &str = "<html><body><h1>SoundCloud TUI authenticated.</h1><p>You can close this tab and return to the terminal.</p></body></html>";
+const CALLBACK_SUCCESS_PAGE: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soundcloud-tui</title>
+<style>
+:root {
+    color-scheme: dark;
+    --bg-top: #05384a;
+    --bg-bottom: #021f29;
+    --title: #f3efe5;
+    --copy: #a8bcc3;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background:
+        radial-gradient(circle at top, rgba(69, 160, 188, 0.14), transparent 38%),
+        linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+    color: var(--title);
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 2rem;
+    text-align: center;
+}
+
+h1 {
+    margin: 0;
+    font-size: clamp(3.5rem, 10vw, 6.75rem);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+}
+
+p {
+    margin: 0;
+    color: var(--copy);
+    font-family: "Iosevka Term", "Cascadia Mono", "SFMono-Regular", "Consolas", monospace;
+    font-size: clamp(0.95rem, 1.4vw, 1.05rem);
+}
+</style>
+</head>
+<body>
+<main>
+<h1>soundcloud-tui</h1>
+<p>You can close this tab and return to your terminal</p>
+</main>
+</body>
+</html>"#;
 const CALLBACK_FAILURE_PAGE: &str = "<html><body><h1>SoundCloud TUI authentication failed.</h1><p>Return to the terminal for the error details.</p></body></html>";
 const CALLBACK_WAITING_PAGE: &str = "<html><body><h1>SoundCloud TUI is still waiting for a valid callback.</h1><p>You can return to the authorization tab or try the manual callback option in the terminal.</p></body></html>";
 

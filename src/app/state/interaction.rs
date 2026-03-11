@@ -48,6 +48,7 @@ impl AppState {
 
     fn show_error_modal(&mut self, title: impl Into<String>, message: impl Into<String>) {
         self.add_to_playlist_modal = None;
+        self.logout_confirm_modal = None;
         self.error_modal = Some(ErrorModal {
             title: title.into(),
             message: message.into(),
@@ -83,6 +84,82 @@ impl AppState {
     fn dismiss_add_to_playlist_modal(&mut self) {
         self.add_to_playlist_modal = None;
         self.status = "Cancelled add to playlist.".to_string();
+    }
+
+    fn open_logout_confirm_modal(&mut self) {
+        self.logout_confirm_modal = Some(LogoutConfirmModal {
+            username: self
+                .session
+                .as_ref()
+                .map(|session| session.profile.username.clone()),
+            discard_unsaved_changes: self
+                .settings_menu
+                .as_ref()
+                .is_some_and(|menu| menu.has_unsaved_changes(&self.settings)),
+        });
+        self.status = "Confirm logout to clear the saved SoundCloud session.".to_string();
+    }
+
+    fn dismiss_logout_confirm_modal(&mut self) {
+        self.logout_confirm_modal = None;
+        self.status = "Stayed signed in.".to_string();
+    }
+
+    fn confirm_logout(&mut self) {
+        if self.logout_confirm_modal.is_none() {
+            return;
+        }
+
+        self.logout_confirm_modal = None;
+        self.set_loading("Clearing saved SoundCloud session...");
+        self.status = "Logging out of SoundCloud...".to_string();
+        self.queue_command(AppCommand::Logout);
+    }
+
+    fn finish_logout(&mut self) {
+        let credentials = self
+            .session
+            .as_ref()
+            .map(|session| session.credentials.clone())
+            .unwrap_or_else(|| self.auth.credentials());
+
+        self.pending_commands.clear();
+        self.queue_command(AppCommand::ControlPlayback(PlayerCommand::Stop));
+        self.queue_command(AppCommand::SetWindowTitle("soundcloud-tui".to_string()));
+
+        self.mode = AppMode::Auth;
+        self.loading = None;
+        self.show_help = false;
+        self.show_welcome = false;
+        self.settings_menu = None;
+        self.logout_confirm_modal = None;
+        self.error_modal = None;
+        self.help_requires_acknowledgement = false;
+        self.help_scroll = 0;
+        self.focus = Focus::Library;
+        self.content_return_focus = Focus::Library;
+        self.search_return_focus = Focus::Library;
+        self.route = Route::Feed;
+        self.selected_library = 0;
+        self.search_query.clear();
+        self.search_cursor = 0;
+        self.session = None;
+        self.auth = AuthState::new(credentials);
+        self.auth_summary = "Not authenticated yet".to_string();
+        self.reset_live_data();
+        self.status = "Logged out. Sign in again to continue.".to_string();
+    }
+
+    fn handle_logout_confirm_key(&mut self, key: KeyEvent) {
+        match (key.code, key.modifiers) {
+            _ if matches!(key.code, KeyCode::Esc)
+                || self.settings.key_matches(KeyAction::Back, key) =>
+            {
+                self.dismiss_logout_confirm_modal()
+            }
+            (KeyCode::Enter, _) => self.confirm_logout(),
+            _ => {}
+        }
     }
 
     fn handle_add_to_playlist_modal_key(&mut self, key: KeyEvent) {
@@ -393,6 +470,11 @@ impl AppState {
             (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => menu.move_selection(1),
             (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => menu.move_selection(-1),
             (KeyCode::Enter, _) => match menu.activate_selected() {
+                Ok(crate::app::settings_menu::ActivateResult::LogoutRequested) => {
+                    self.settings_menu = Some(menu);
+                    self.open_logout_confirm_modal();
+                    return;
+                }
                 Ok(_) => {
                     self.status = format!("Editing {} settings.", menu.tab.label());
                 }
@@ -405,6 +487,11 @@ impl AppState {
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        if self.mode == AppMode::Auth {
+            self.handle_auth_mouse(mouse);
+            return;
+        }
+
         if self.mode != AppMode::Main {
             return;
         }
@@ -415,6 +502,11 @@ impl AppState {
 
         if self.error_modal.is_some() {
             self.handle_error_modal_mouse(mouse);
+            return;
+        }
+
+        if self.logout_confirm_modal.is_some() {
+            self.handle_logout_confirm_mouse(mouse);
             return;
         }
 
@@ -446,6 +538,26 @@ impl AppState {
         self.handle_main_mouse(mouse);
     }
 
+    fn handle_auth_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+
+        let Some(focus) = geometry::auth_focus_at(area, self.auth.step, mouse.column, mouse.row)
+        else {
+            return;
+        };
+
+        let cursor = geometry::auth_input_cursor_at(area, self.auth.step, focus, mouse.column);
+        if let Some(intent) = self.auth.click_focus(focus, cursor) {
+            self.handle_auth_intent(intent);
+        }
+    }
+
     fn register_click(&mut self, target: MouseClickTarget) -> bool {
         let now = Instant::now();
         let is_double_click = self.last_mouse_click.is_some_and(|previous| {
@@ -463,6 +575,22 @@ impl AppState {
     fn handle_error_modal_mouse(&mut self, mouse: MouseEvent) {
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             self.dismiss_error_modal();
+        }
+    }
+
+    fn handle_logout_confirm_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+
+        let Some(area) = geometry::viewport_area(self) else {
+            return;
+        };
+
+        match geometry::logout_confirm_action_at(area, mouse.column, mouse.row) {
+            Some(geometry::LogoutConfirmAction::Cancel) => self.dismiss_logout_confirm_modal(),
+            Some(geometry::LogoutConfirmAction::Confirm) => self.confirm_logout(),
+            None => {}
         }
     }
 
@@ -511,6 +639,11 @@ impl AppState {
 
                     if was_selected {
                         match menu.activate_selected() {
+                            Ok(crate::app::settings_menu::ActivateResult::LogoutRequested) => {
+                                self.settings_menu = Some(menu);
+                                self.open_logout_confirm_modal();
+                                return;
+                            }
                             Ok(_) => {
                                 self.status = format!("Editing {} settings.", menu.tab.label());
                             }
@@ -776,6 +909,11 @@ impl AppState {
 
                 if self.error_modal.is_some() {
                     self.handle_error_modal_key(key);
+                    return;
+                }
+
+                if self.logout_confirm_modal.is_some() {
+                    self.handle_logout_confirm_key(key);
                     return;
                 }
 

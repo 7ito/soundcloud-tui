@@ -16,5 +16,6 @@ pub use playback::{PlaybackIntent, RepeatMode};
 pub use route::{Focus, Route};
 pub use settings_menu::{SettingsItem, SettingsMenuState, SettingsTab, SettingsValue};
 pub use state::{
-    AddToPlaylistModal, AppState, ErrorModal, HelpRow, LayoutState, Toast, VisualizerState,
+    AddToPlaylistModal, AppState, ErrorModal, HelpRow, LayoutState, LogoutConfirmModal, Toast,
+    VisualizerState,
 };

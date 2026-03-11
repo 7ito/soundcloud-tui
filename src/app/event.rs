@@ -27,6 +27,8 @@ pub enum AppEvent {
     AuthCallbackCaptured(String),
     AuthCallbackFailed(String),
     AuthCompleted(Result<AuthorizedSession, String>),
+    LogoutCompleted,
+    LogoutFailed(String),
     FeedLoaded {
         session: AuthorizedSession,
         page: Page<crate::soundcloud::models::FeedItem>,

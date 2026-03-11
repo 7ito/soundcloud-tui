@@ -216,7 +216,28 @@ impl AuthState {
         self.clear_error();
     }
 
+    pub fn click_focus(&mut self, focus: AuthFocus, cursor: Option<usize>) -> Option<AuthIntent> {
+        self.focus = focus;
+        if let Some(cursor) = cursor {
+            if let Some(input) = self.active_input_mut() {
+                input.set_cursor(cursor);
+            }
+            None
+        } else {
+            self.focused_action()
+        }
+    }
+
     fn submit_focus(&mut self) -> Option<AuthIntent> {
+        if let Some(intent) = self.focused_action() {
+            Some(intent)
+        } else {
+            self.focus = self.next_focus();
+            None
+        }
+    }
+
+    fn focused_action(&self) -> Option<AuthIntent> {
         match self.focus {
             AuthFocus::OpenAppsPage => Some(AuthIntent::OpenAppsPage),
             AuthFocus::SaveAndContinue => Some(AuthIntent::SaveAndContinue),
@@ -225,10 +246,7 @@ impl AuthState {
             AuthFocus::BackToCredentials => Some(AuthIntent::BackToCredentials),
             AuthFocus::SubmitCallback => Some(AuthIntent::SubmitManualCallback),
             AuthFocus::BackToBrowser => Some(AuthIntent::BackToBrowser),
-            _ => {
-                self.focus = self.next_focus();
-                None
-            }
+            _ => None,
         }
     }
 
@@ -377,6 +395,10 @@ impl TextInput {
 
     pub fn move_end(&mut self) {
         self.cursor = self.value.chars().count();
+    }
+
+    pub fn set_cursor(&mut self, cursor: usize) {
+        self.cursor = cursor.min(self.value.chars().count());
     }
 }
 

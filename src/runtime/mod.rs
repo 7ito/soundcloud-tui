@@ -12,7 +12,7 @@ use tokio::{sync::mpsc, task};
 
 use crate::{
     app::{AppCommand, AppEvent, AppState},
-    config::paths::AppPaths,
+    config::{paths::AppPaths, tokens::TokenStore},
     player::{event::PlayerEvent, runtime::PlayerHandle},
     soundcloud::{
         auth,
@@ -123,6 +123,13 @@ impl CommandExecutor {
                         .map_err(|error| error.to_string());
                     let _ = sender.send(AppEvent::AuthCompleted(result));
                 });
+            }
+            AppCommand::Logout => {
+                let result = TokenStore::clear(&self.paths);
+                let _ = match result {
+                    Ok(()) => self.sender.send(AppEvent::LogoutCompleted),
+                    Err(error) => self.sender.send(AppEvent::LogoutFailed(error.to_string())),
+                };
             }
             AppCommand::LoadFeed {
                 session,

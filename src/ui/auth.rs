@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
@@ -8,24 +8,18 @@ use ratatui::{
 
 use crate::{
     app::{AppMode, AppState, AuthFocus, AuthStep, TextInput},
-    ui::widgets::{header_style, pane_block},
+    ui::{
+        geometry,
+        widgets::{header_style, pane_block},
+    },
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     debug_assert_eq!(app.mode, AppMode::Auth);
 
     let block = pane_block("SoundCloud Onboarding", true, app);
-    let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(10),
-            Constraint::Length(4),
-        ])
-        .split(inner);
+    let layout = geometry::auth_layout(area);
 
     let header = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -38,16 +32,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
         ),
     ])
     .wrap(Wrap { trim: true });
-    frame.render_widget(header, sections[0]);
+    frame.render_widget(header, layout.header);
 
     match app.auth.step {
-        AuthStep::CheckingSession => render_checking(frame, sections[1], app),
-        AuthStep::Credentials => render_credentials(frame, sections[1], app),
-        AuthStep::WaitingForBrowser => render_waiting(frame, sections[1], app),
-        AuthStep::ManualCallback => render_manual_callback(frame, sections[1], app),
+        AuthStep::CheckingSession => render_checking(frame, layout.body, app),
+        AuthStep::Credentials => render_credentials(frame, layout.body, app),
+        AuthStep::WaitingForBrowser => render_waiting(frame, layout.body, app),
+        AuthStep::ManualCallback => render_manual_callback(frame, layout.body, app),
     }
 
-    render_footer(frame, sections[2], app);
+    render_footer(frame, layout.footer, app);
 }
 
 fn render_checking(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
@@ -72,17 +66,7 @@ fn render_checking(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 }
 
 fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(6),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-        ])
-        .split(area);
+    let layout = geometry::auth_credentials_layout(area);
 
     let instructions = Paragraph::new(vec![
         Line::from("1. Open your SoundCloud app dashboard and create or select an app."),
@@ -94,11 +78,11 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ])
     .block(pane_block("Instructions", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(instructions, rows[0]);
+    frame.render_widget(instructions, layout.instructions);
 
     render_input(
         frame,
-        rows[1],
+        layout.client_id,
         "Client ID",
         &app.auth.form.client_id,
         app.auth.focus == AuthFocus::ClientId,
@@ -107,7 +91,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     );
     render_input(
         frame,
-        rows[2],
+        layout.client_secret,
         "Client Secret",
         &app.auth.form.client_secret,
         app.auth.focus == AuthFocus::ClientSecret,
@@ -116,28 +100,23 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     );
     render_input(
         frame,
-        rows[3],
+        layout.redirect_uri,
         "Redirect URI",
         &app.auth.form.redirect_uri,
         app.auth.focus == AuthFocus::RedirectUri,
         false,
         app,
     );
-
-    let buttons = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[4]);
     render_button(
         frame,
-        buttons[0],
+        layout.open_apps,
         "Open SoundCloud Apps Page",
         app.auth.focus == AuthFocus::OpenAppsPage,
         app,
     );
     render_button(
         frame,
-        buttons[1],
+        layout.save_and_continue,
         "Save and Continue",
         app.auth.focus == AuthFocus::SaveAndContinue,
         app,
@@ -145,24 +124,16 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     let reminder = Paragraph::new(vec![
         Line::from("Credentials are stored locally in ~/.config/soundcloud-tui/credentials.toml."),
-        Line::from("Use Tab or Up/Down to move focus, type into fields, and press Enter on buttons."),
+        Line::from("Click a field to place the cursor, or use Tab/Up/Down to move focus and Enter on buttons."),
         Line::from("Paste works with terminal paste shortcuts and with Ctrl+V when clipboard access is available."),
     ])
     .block(pane_block("Local Storage", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(reminder, rows[5]);
+    frame.render_widget(reminder, layout.reminder);
 }
 
 fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Length(6),
-            Constraint::Length(3),
-            Constraint::Length(3),
-        ])
-        .split(area);
+    let layout = geometry::auth_waiting_layout(area);
 
     let instructions = Paragraph::new(vec![
         Line::from("The credentials were saved. Next, approve access in your browser."),
@@ -171,7 +142,7 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ])
     .block(pane_block("Authorize", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(instructions, rows[0]);
+    frame.render_widget(instructions, layout.instructions);
 
     let auth_url = app
         .auth
@@ -188,33 +159,25 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ])
     .block(pane_block("Browser", false, app))
     .wrap(Wrap { trim: false });
-    frame.render_widget(auth_url_widget, rows[1]);
+    frame.render_widget(auth_url_widget, layout.browser);
 
-    let buttons = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(rows[2]);
     render_button(
         frame,
-        buttons[0],
+        layout.open_browser,
         "Open Browser Again",
         app.auth.focus == AuthFocus::OpenBrowser,
         app,
     );
     render_button(
         frame,
-        buttons[1],
+        layout.paste_callback,
         "Paste Callback URL",
         app.auth.focus == AuthFocus::PasteCallback,
         app,
     );
     render_button(
         frame,
-        buttons[2],
+        layout.back_to_credentials,
         "Back to Credentials",
         app.auth.focus == AuthFocus::BackToCredentials,
         app,
@@ -223,24 +186,16 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let status = Paragraph::new(vec![
         Line::from(format!("State: {}", app.loading_label())),
         Line::from(
-            "If your browser did not open automatically, copy the URL above into it manually.",
+            "If your browser did not open automatically, click the button above or copy the URL into it manually.",
         ),
     ])
     .block(pane_block("Status", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(status, rows[3]);
+    frame.render_widget(status, layout.status);
 }
 
 fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-        ])
-        .split(area);
+    let layout = geometry::auth_manual_callback_layout(area);
 
     let instructions = Paragraph::new(vec![
         Line::from("Automatic callback capture could not finish the flow."),
@@ -249,32 +204,27 @@ fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ])
     .block(pane_block("Manual Callback", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(instructions, rows[0]);
+    frame.render_widget(instructions, layout.instructions);
 
     render_input(
         frame,
-        rows[1],
+        layout.callback_input,
         "Callback URL",
         &app.auth.callback_input,
         app.auth.focus == AuthFocus::CallbackInput,
         false,
         app,
     );
-
-    let buttons = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[2]);
     render_button(
         frame,
-        buttons[0],
+        layout.submit_callback,
         "Submit Callback URL",
         app.auth.focus == AuthFocus::SubmitCallback,
         app,
     );
     render_button(
         frame,
-        buttons[1],
+        layout.back_to_browser,
         "Back to Browser Step",
         app.auth.focus == AuthFocus::BackToBrowser,
         app,
@@ -286,7 +236,7 @@ fn render_manual_callback(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     ])
     .block(pane_block("Accepted Formats", false, app))
     .wrap(Wrap { trim: true });
-    frame.render_widget(help, rows[3]);
+    frame.render_widget(help, layout.help);
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState) {

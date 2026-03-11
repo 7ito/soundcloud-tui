@@ -337,6 +337,189 @@ fn credentials_saved_event_starts_browser_flow() {
 }
 
 #[test]
+fn mouse_click_auth_input_focuses_field() {
+    let mut app = AppState::new_onboarding(Credentials::default());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_credentials_layout(body).client_secret;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.auth.focus, AuthFocus::ClientSecret);
+}
+
+#[test]
+fn mouse_click_auth_input_places_cursor_at_clicked_position() {
+    let mut app = AppState::new_onboarding(Credentials::default());
+    app.auth.form.client_id.value = "client-id".to_string();
+    app.auth.form.client_id.cursor = app.auth.form.client_id.value.len();
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_credentials_layout(body).client_id;
+    let (column, row) = point_in_input(target, 3);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.auth.focus, AuthFocus::ClientId);
+    assert_eq!(app.auth.form.client_id.cursor, 3);
+}
+
+#[test]
+fn mouse_click_auth_save_and_continue_queues_credentials_save() {
+    let credentials = Credentials {
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        redirect_uri: "http://127.0.0.1:8974/callback".to_string(),
+    };
+    let mut app = AppState::new_onboarding(credentials.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_credentials_layout(body).save_and_continue;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    match app.take_pending_command() {
+        Some(AppCommand::SaveCredentials(request)) => {
+            assert_eq!(request.credentials.client_id, credentials.client_id);
+            assert_eq!(request.credentials.client_secret, credentials.client_secret);
+        }
+        other => panic!("expected SaveCredentials command, got {other:?}"),
+    }
+}
+
+#[test]
+fn mouse_click_waiting_step_open_browser_queues_url() {
+    let credentials = Credentials {
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        redirect_uri: "http://127.0.0.1:8974/callback".to_string(),
+    };
+    let request = auth::prepare_authorization(credentials).expect("authorization request");
+    let expected_url = request.authorize_url.clone();
+    let mut app = AppState::new_onboarding(request.credentials.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    app.dispatch_event(AppEvent::CredentialsSaved(request));
+    drain_pending_commands(&mut app);
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_waiting_layout(body).open_browser;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    match app.take_pending_command() {
+        Some(AppCommand::OpenUrl(url)) => assert_eq!(url, expected_url),
+        other => panic!("expected OpenUrl command, got {other:?}"),
+    }
+}
+
+#[test]
+fn mouse_click_waiting_step_paste_callback_switches_to_manual_mode() {
+    let credentials = Credentials {
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        redirect_uri: "http://127.0.0.1:8974/callback".to_string(),
+    };
+    let request = auth::prepare_authorization(credentials).expect("authorization request");
+    let mut app = AppState::new_onboarding(request.credentials.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    app.dispatch_event(AppEvent::CredentialsSaved(request));
+    drain_pending_commands(&mut app);
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_waiting_layout(body).paste_callback;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.auth.step, AuthStep::ManualCallback);
+    assert_eq!(app.auth.focus, AuthFocus::CallbackInput);
+}
+
+#[test]
+fn mouse_click_manual_callback_input_focuses_field() {
+    let credentials = Credentials {
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        redirect_uri: "http://127.0.0.1:8974/callback".to_string(),
+    };
+    let request = auth::prepare_authorization(credentials).expect("authorization request");
+    let mut app = AppState::new_onboarding(request.credentials.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    app.auth.set_waiting_for_browser(request);
+    app.auth.show_manual_callback("Paste callback");
+    app.auth.focus = AuthFocus::SubmitCallback;
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_manual_callback_layout(body).callback_input;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert_eq!(app.auth.focus, AuthFocus::CallbackInput);
+}
+
+#[test]
+fn mouse_click_manual_callback_submit_queues_exchange() {
+    let credentials = Credentials {
+        client_id: "client-id".to_string(),
+        client_secret: "client-secret".to_string(),
+        redirect_uri: "http://127.0.0.1:8974/callback".to_string(),
+    };
+    let request = auth::prepare_authorization(credentials).expect("authorization request");
+    let expected_callback = "http://127.0.0.1:8974/callback?code=abc&state=xyz".to_string();
+    let mut app = AppState::new_onboarding(request.credentials.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+    app.auth.set_waiting_for_browser(request.clone());
+    app.auth.show_manual_callback("Paste callback");
+    app.auth.callback_input.value = expected_callback.clone();
+    app.auth.callback_input.cursor = expected_callback.len();
+
+    let body = auth_body_area(&app);
+    let target = geometry::auth_manual_callback_layout(body).submit_callback;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    match app.take_pending_command() {
+        Some(AppCommand::ExchangeAuthorizationCode {
+            request: queued_request,
+            callback_input,
+        }) => {
+            assert_eq!(queued_request.authorize_url, request.authorize_url);
+            assert_eq!(callback_input, expected_callback);
+        }
+        other => panic!("expected ExchangeAuthorizationCode command, got {other:?}"),
+    }
+}
+
+#[test]
 fn player_position_updates_now_playing_progress() {
     let mut app = AppState::new();
     let track = dummy_track("soundcloud:tracks:1", "First Track");
@@ -1114,6 +1297,192 @@ fn open_settings_shortcut_and_save_persists_behavior_changes() {
 }
 
 #[test]
+fn logout_action_from_settings_opens_confirmation_modal() {
+    let mut app = AppState::new();
+    app.session = Some(dummy_session());
+
+    open_settings_and_select_logout(&mut app);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    assert!(app.logout_confirm_modal.is_some());
+    assert!(app.show_settings());
+}
+
+#[test]
+fn mouse_click_logout_cancel_button_closes_confirmation_modal() {
+    let session = dummy_session();
+    let mut app = AppState::new();
+    app.session = Some(session.clone());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+
+    open_logout_confirm(&mut app);
+    let area = geometry::viewport_area(&app).expect("viewport");
+    let target = geometry::logout_confirm_layout(area).cancel_button;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert!(app.logout_confirm_modal.is_none());
+    assert_eq!(app.mode, AppMode::Main);
+    assert_eq!(
+        app.session
+            .as_ref()
+            .expect("session should remain active")
+            .profile
+            .username,
+        session.profile.username
+    );
+}
+
+#[test]
+fn mouse_click_logout_confirm_button_queues_logout() {
+    let mut app = AppState::new();
+    app.session = Some(dummy_session());
+    app.dispatch_event(AppEvent::Resize {
+        width: 120,
+        height: 40,
+    });
+
+    open_logout_confirm(&mut app);
+    let area = geometry::viewport_area(&app).expect("viewport");
+    let target = geometry::logout_confirm_layout(area).confirm_button;
+    let (column, row) = point_inside(target);
+
+    app.dispatch_event(AppEvent::Mouse(left_click(column, row)));
+
+    assert!(app.logout_confirm_modal.is_none());
+    match app.take_pending_command() {
+        Some(AppCommand::Logout) => {}
+        other => panic!("expected Logout command, got {other:?}"),
+    }
+}
+
+#[test]
+fn logout_confirmation_cancel_keeps_active_session() {
+    let session = dummy_session();
+    let mut app = AppState::new();
+    app.session = Some(session.clone());
+
+    open_settings_and_select_logout(&mut app);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+
+    assert!(app.logout_confirm_modal.is_none());
+    assert_eq!(app.mode, AppMode::Main);
+    assert_eq!(
+        app.session
+            .as_ref()
+            .expect("session should remain active")
+            .profile
+            .username,
+        session.profile.username
+    );
+}
+
+#[test]
+fn logout_completion_returns_to_auth_mode_and_stops_playback() {
+    let session = dummy_session();
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:600", "Logout Track");
+    app.session = Some(session.clone());
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title.clone();
+    app.now_playing.artist = track.artist.clone();
+
+    open_settings_and_select_logout(&mut app);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::Logout) => {}
+        other => panic!("expected Logout command, got {other:?}"),
+    }
+
+    app.dispatch_event(AppEvent::LogoutCompleted);
+
+    assert_eq!(app.mode, AppMode::Auth);
+    assert!(app.session.is_none());
+    assert!(app.settings_menu.is_none());
+    assert!(app.logout_confirm_modal.is_none());
+    assert_eq!(app.auth_summary, "Not authenticated yet");
+    assert_eq!(app.auth.form.client_id.value, session.credentials.client_id);
+    assert_eq!(
+        app.auth.form.client_secret.value,
+        session.credentials.client_secret
+    );
+    assert_eq!(app.now_playing.title, "Nothing playing");
+
+    match app.take_pending_command() {
+        Some(AppCommand::ControlPlayback(PlayerCommand::Stop)) => {}
+        other => panic!("expected Stop command, got {other:?}"),
+    }
+    match app.take_pending_command() {
+        Some(AppCommand::SetWindowTitle(title)) => assert_eq!(title, "soundcloud-tui"),
+        other => panic!("expected SetWindowTitle command, got {other:?}"),
+    }
+}
+
+#[test]
+fn logout_failure_shows_error_and_keeps_main_session() {
+    let session = dummy_session();
+    let mut app = AppState::new();
+    app.session = Some(session.clone());
+
+    open_settings_and_select_logout(&mut app);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::Logout) => {}
+        other => panic!("expected Logout command, got {other:?}"),
+    }
+
+    app.dispatch_event(AppEvent::LogoutFailed("permission denied".to_string()));
+
+    assert_eq!(app.mode, AppMode::Main);
+    assert!(app.logout_confirm_modal.is_none());
+    assert_eq!(
+        app.session
+            .as_ref()
+            .expect("session should remain active")
+            .profile
+            .username,
+        session.profile.username
+    );
+
+    let error_modal = app
+        .error_modal
+        .as_ref()
+        .expect("expected logout error modal");
+    assert_eq!(error_modal.title, "Could not log out");
+    assert!(error_modal.message.contains("permission denied"));
+}
+
+#[test]
 fn startup_behavior_play_queues_recent_track_on_auth_complete() {
     let track = dummy_track("soundcloud:tracks:500", "Startup Track");
     let history = RecentlyPlayedStore {
@@ -1706,6 +2075,54 @@ fn dummy_session() -> AuthorizedSession {
 
 fn drain_pending_commands(app: &mut AppState) {
     while app.take_pending_command().is_some() {}
+}
+
+fn auth_body_area(app: &AppState) -> ratatui::layout::Rect {
+    let area = geometry::viewport_area(app).expect("viewport");
+    geometry::auth_layout(area).body
+}
+
+fn point_in_input(rect: ratatui::layout::Rect, offset: u16) -> (u16, u16) {
+    let inner = pane_inner(rect);
+    (
+        inner.x.saturating_add(offset),
+        inner.y + inner.height.saturating_sub(1).min(1),
+    )
+}
+
+fn point_inside(rect: ratatui::layout::Rect) -> (u16, u16) {
+    (
+        rect.x + rect.width.saturating_sub(1).min(1),
+        rect.y + rect.height.saturating_sub(1).min(1),
+    )
+}
+
+fn open_logout_confirm(app: &mut AppState) {
+    open_settings_and_select_logout(app);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+}
+
+fn open_settings_and_select_logout(app: &mut AppState) {
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char(','),
+        KeyModifiers::ALT,
+    )));
+
+    let logout_index = app
+        .settings_menu
+        .as_ref()
+        .expect("settings menu should be open")
+        .items()
+        .iter()
+        .position(|item| item.name == "Log Out")
+        .expect("logout row should exist");
+    app.settings_menu
+        .as_mut()
+        .expect("settings menu should stay open")
+        .set_selected_index(logout_index);
 }
 
 fn seed_liked_tracks(app: &mut AppState, tracks: Vec<TrackSummary>) {

@@ -52,6 +52,10 @@ pub fn render_app(frame: &mut Frame<'_>, app: &AppState, cover_art: &mut CoverAr
         super::settings::render(frame, frame.area(), app);
     }
 
+    if app.logout_confirm_modal.is_some() {
+        super::logout_confirm_modal::render(frame, frame.area(), app);
+    }
+
     if app.error_modal.is_some() {
         super::error_modal::render(frame, frame.area(), app);
     }

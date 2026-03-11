@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Flex, Layout, Rect};
 
 use crate::{
-    app::{AppState, Route, SettingsTab},
+    app::{AppState, AuthFocus, AuthStep, Route, SettingsTab},
     ui::widgets::pane_inner,
 };
 
@@ -25,6 +25,59 @@ pub struct OverlayLayout {
     pub overlay: Rect,
     pub body: Rect,
     pub footer: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct AuthLayout {
+    pub overlay: Rect,
+    pub header: Rect,
+    pub body: Rect,
+    pub footer: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct AuthCredentialsLayout {
+    pub instructions: Rect,
+    pub client_id: Rect,
+    pub client_secret: Rect,
+    pub redirect_uri: Rect,
+    pub open_apps: Rect,
+    pub save_and_continue: Rect,
+    pub reminder: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct AuthWaitingLayout {
+    pub instructions: Rect,
+    pub browser: Rect,
+    pub open_browser: Rect,
+    pub paste_callback: Rect,
+    pub back_to_credentials: Rect,
+    pub status: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct AuthManualCallbackLayout {
+    pub instructions: Rect,
+    pub callback_input: Rect,
+    pub submit_callback: Rect,
+    pub back_to_browser: Rect,
+    pub help: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct LogoutConfirmLayout {
+    pub overlay: Rect,
+    pub body: Rect,
+    pub cancel_button: Rect,
+    pub confirm_button: Rect,
+    pub footer: Rect,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum LogoutConfirmAction {
+    Cancel,
+    Confirm,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -187,6 +240,177 @@ pub fn main_layout(frame: Rect, app: &AppState) -> MainLayout {
     }
 }
 
+pub fn auth_layout(area: Rect) -> AuthLayout {
+    let overlay = area;
+    let inner = pane_inner(area);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(10),
+            Constraint::Length(4),
+        ])
+        .split(inner);
+
+    AuthLayout {
+        overlay,
+        header: sections[0],
+        body: sections[1],
+        footer: sections[2],
+    }
+}
+
+pub fn auth_credentials_layout(area: Rect) -> AuthCredentialsLayout {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    let buttons = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[4]);
+
+    AuthCredentialsLayout {
+        instructions: rows[0],
+        client_id: rows[1],
+        client_secret: rows[2],
+        redirect_uri: rows[3],
+        open_apps: buttons[0],
+        save_and_continue: buttons[1],
+        reminder: rows[5],
+    }
+}
+
+pub fn auth_waiting_layout(area: Rect) -> AuthWaitingLayout {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Length(6),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    let buttons = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(rows[2]);
+
+    AuthWaitingLayout {
+        instructions: rows[0],
+        browser: rows[1],
+        open_browser: buttons[0],
+        paste_callback: buttons[1],
+        back_to_credentials: buttons[2],
+        status: rows[3],
+    }
+}
+
+pub fn auth_manual_callback_layout(area: Rect) -> AuthManualCallbackLayout {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    let buttons = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[2]);
+
+    AuthManualCallbackLayout {
+        instructions: rows[0],
+        callback_input: rows[1],
+        submit_callback: buttons[0],
+        back_to_browser: buttons[1],
+        help: rows[3],
+    }
+}
+
+pub fn auth_focus_at(area: Rect, step: AuthStep, column: u16, row: u16) -> Option<AuthFocus> {
+    let layout = auth_layout(area);
+
+    match step {
+        AuthStep::CheckingSession => None,
+        AuthStep::Credentials => {
+            let layout = auth_credentials_layout(layout.body);
+            [
+                (AuthFocus::ClientId, layout.client_id),
+                (AuthFocus::ClientSecret, layout.client_secret),
+                (AuthFocus::RedirectUri, layout.redirect_uri),
+                (AuthFocus::OpenAppsPage, layout.open_apps),
+                (AuthFocus::SaveAndContinue, layout.save_and_continue),
+            ]
+            .into_iter()
+            .find_map(|(focus, rect)| rect_contains(rect, column, row).then_some(focus))
+        }
+        AuthStep::WaitingForBrowser => {
+            let layout = auth_waiting_layout(layout.body);
+            [
+                (AuthFocus::OpenBrowser, layout.open_browser),
+                (AuthFocus::PasteCallback, layout.paste_callback),
+                (AuthFocus::BackToCredentials, layout.back_to_credentials),
+            ]
+            .into_iter()
+            .find_map(|(focus, rect)| rect_contains(rect, column, row).then_some(focus))
+        }
+        AuthStep::ManualCallback => {
+            let layout = auth_manual_callback_layout(layout.body);
+            [
+                (AuthFocus::CallbackInput, layout.callback_input),
+                (AuthFocus::SubmitCallback, layout.submit_callback),
+                (AuthFocus::BackToBrowser, layout.back_to_browser),
+            ]
+            .into_iter()
+            .find_map(|(focus, rect)| rect_contains(rect, column, row).then_some(focus))
+        }
+    }
+}
+
+pub fn auth_input_cursor_at(
+    area: Rect,
+    step: AuthStep,
+    focus: AuthFocus,
+    column: u16,
+) -> Option<usize> {
+    let input_area = match step {
+        AuthStep::Credentials => match focus {
+            AuthFocus::ClientId => Some(auth_credentials_layout(auth_layout(area).body).client_id),
+            AuthFocus::ClientSecret => {
+                Some(auth_credentials_layout(auth_layout(area).body).client_secret)
+            }
+            AuthFocus::RedirectUri => {
+                Some(auth_credentials_layout(auth_layout(area).body).redirect_uri)
+            }
+            _ => None,
+        },
+        AuthStep::ManualCallback => match focus {
+            AuthFocus::CallbackInput => {
+                Some(auth_manual_callback_layout(auth_layout(area).body).callback_input)
+            }
+            _ => None,
+        },
+        _ => None,
+    }?;
+
+    let inner = pane_inner(input_area);
+    Some(column.saturating_sub(inner.x) as usize)
+}
+
 pub fn content_layout(area: Rect, app: &AppState) -> ContentLayout {
     let inner = pane_inner(area);
     let summary_lines = content_summary_line_count(app);
@@ -289,6 +513,43 @@ pub fn add_to_playlist_layout(area: Rect) -> AddToPlaylistLayout {
     }
 }
 
+pub fn logout_confirm_layout(area: Rect) -> LogoutConfirmLayout {
+    let overlay = centered_rect(area, 4, 72, 13);
+    let inner = pane_inner(overlay);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let buttons = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(sections[1]);
+
+    LogoutConfirmLayout {
+        overlay,
+        body: sections[0],
+        cancel_button: buttons[0],
+        confirm_button: buttons[1],
+        footer: sections[2],
+    }
+}
+
+pub fn logout_confirm_action_at(area: Rect, column: u16, row: u16) -> Option<LogoutConfirmAction> {
+    let layout = logout_confirm_layout(area);
+
+    if rect_contains(layout.cancel_button, column, row) {
+        Some(LogoutConfirmAction::Cancel)
+    } else if rect_contains(layout.confirm_button, column, row) {
+        Some(LogoutConfirmAction::Confirm)
+    } else {
+        None
+    }
+}
+
 pub fn error_layout(area: Rect) -> ErrorLayout {
     let overlay = centered_rect(area, 4, 88, 12);
     let inner = pane_inner(overlay);
@@ -382,6 +643,13 @@ fn centered_rect(area: Rect, margin: u16, max_width: u16, max_height: u16) -> Re
         .split(vertical[0]);
 
     horizontal[0]
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
 }
 
 fn content_summary_line_count(app: &AppState) -> u16 {

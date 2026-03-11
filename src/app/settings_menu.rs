@@ -55,6 +55,12 @@ pub enum SettingField {
     Keybinding(KeyAction),
     ThemePreset,
     ThemeColor(ThemeColorField),
+    Action(SettingsAction),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SettingsAction {
+    LogOut,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -98,6 +104,7 @@ pub enum SettingsValue {
     Text(String),
     Key(String),
     Color(String),
+    Action(&'static str),
     Cycle {
         current: String,
         options: &'static [&'static str],
@@ -125,6 +132,7 @@ impl SettingsItem {
             SettingsValue::Text(value) => format!("\"{value}\""),
             SettingsValue::Key(value) => format!("[{value}]"),
             SettingsValue::Color(value) => format!("■ {value}"),
+            SettingsValue::Action(label) => format!("[Enter] {label}"),
             SettingsValue::Cycle { current, .. } => format!("◆ {current} ◆"),
         }
     }
@@ -142,6 +150,7 @@ pub struct SettingsMenuState {
 pub enum ActivateResult {
     Changed,
     EditingStarted,
+    LogoutRequested,
 }
 
 impl SettingsMenuState {
@@ -214,6 +223,7 @@ impl SettingsMenuState {
                 self.set_bool(item.field, !value);
                 Ok(ActivateResult::Changed)
             }
+            SettingsValue::Action(_) => Ok(ActivateResult::LogoutRequested),
             SettingsValue::Cycle { current, options } => {
                 let next = next_cycle_value(&current, options);
                 self.apply_cycle(item.field, &next)?;
@@ -266,7 +276,7 @@ impl SettingsMenuState {
                 let normalized = normalize_keybinding(&self.edit_buffer)?;
                 self.apply_text(item.field, normalized)?;
             }
-            SettingsValue::Bool(_) | SettingsValue::Cycle { .. } => {}
+            SettingsValue::Bool(_) | SettingsValue::Action(_) | SettingsValue::Cycle { .. } => {}
         }
 
         self.cancel_edit();
@@ -490,6 +500,11 @@ fn behavior_items(settings: &Settings) -> Vec<SettingsItem> {
             field: SettingField::Behavior(BehaviorField::ForceDrawCoverArt),
             name: "Force Draw Cover Art",
             value: SettingsValue::Bool(settings.force_draw_cover_art),
+        },
+        SettingsItem {
+            field: SettingField::Action(SettingsAction::LogOut),
+            name: "Log Out",
+            value: SettingsValue::Action("Clear saved SoundCloud session"),
         },
     ]
 }

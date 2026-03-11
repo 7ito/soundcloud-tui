@@ -441,6 +441,7 @@ impl AppState {
         self.selected_playlist = 0;
         self.selected_content = 0;
         self.add_to_playlist_modal = None;
+        self.logout_confirm_modal = None;
         self.queue = QueueState::default();
         self.playback_plan = PlaybackPlanState::default();
         self.player = PlayerState {
@@ -563,5 +564,4 @@ impl AppState {
         self.status = format!("Reloading {}...", self.route_title());
         self.request_route_load(false);
     }
-
 }

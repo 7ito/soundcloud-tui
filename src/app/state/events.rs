@@ -1,5 +1,9 @@
 impl AppState {
     pub fn dispatch_event(&mut self, event: AppEvent) {
+        if self.mode == AppMode::Auth && !event_allowed_during_auth(&event) {
+            return;
+        }
+
         match event {
             AppEvent::Key(key) => self.handle_key_event(key),
             AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
@@ -63,6 +67,14 @@ impl AppState {
                     self.status = error;
                 }
             },
+            AppEvent::LogoutCompleted => self.finish_logout(),
+            AppEvent::LogoutFailed(error) => {
+                self.loading = None;
+                self.show_main_error(
+                    "Could not log out",
+                    format!("Could not clear the saved SoundCloud session from disk.\n\n{error}"),
+                );
+            }
             AppEvent::FeedLoaded {
                 session,
                 page,
@@ -421,4 +433,21 @@ impl AppState {
             self.pending_commands.pop_front()
         }
     }
+}
+
+fn event_allowed_during_auth(event: &AppEvent) -> bool {
+    matches!(
+        event,
+        AppEvent::Key(_)
+            | AppEvent::Mouse(_)
+            | AppEvent::Paste(_)
+            | AppEvent::Tick
+            | AppEvent::Resize { .. }
+            | AppEvent::CredentialsSaved(_)
+            | AppEvent::CredentialsSaveFailed(_)
+            | AppEvent::AuthRestoreComplete(_)
+            | AppEvent::AuthCallbackCaptured(_)
+            | AppEvent::AuthCallbackFailed(_)
+            | AppEvent::AuthCompleted(_)
+    )
 }

@@ -9,6 +9,7 @@ pub mod geometry;
 pub mod header;
 pub mod help;
 pub mod layout;
+pub mod logout_confirm_modal;
 pub mod playbar;
 pub mod queue;
 pub mod settings;

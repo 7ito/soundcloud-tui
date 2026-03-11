@@ -92,6 +92,10 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let menu = app.settings_menu.as_ref().expect("settings menu state");
+    let selected_is_action = menu
+        .items()
+        .get(menu.selected_index())
+        .is_some_and(|item| matches!(&item.value, SettingsValue::Action(_)));
     let controls = if menu.editing {
         match menu
             .items()
@@ -107,7 +111,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             _ => "Enter: Confirm | Esc: Cancel".to_string(),
         }
     } else {
-        return_controls(app)
+        return_controls(app, selected_is_action)
     };
     let hint = if menu.has_unsaved_changes(app.settings()) {
         "Unsaved changes"
@@ -124,9 +128,16 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     frame.render_widget(footer, area);
 }
 
-fn return_controls(app: &AppState) -> String {
+fn return_controls(app: &AppState, selected_is_action: bool) -> String {
+    let enter_hint = if selected_is_action {
+        "Enter: Open confirmation"
+    } else {
+        "Enter: Toggle/Edit"
+    };
+
     format!(
-        "↑/↓: Select | ←/→: Switch Tab | Enter: Toggle/Edit | Mouse: Click/Scroll | {}: Save | Esc/{}: Exit",
+        "↑/↓: Select | ←/→: Switch Tab | {} | Mouse: Click/Scroll | {}: Save | Esc/{}: Exit",
+        enter_hint,
         format_key_hint(app.settings().keybinding(KeyAction::SaveSettings)),
         format_key_hint(app.settings().keybinding(KeyAction::Back)),
     )

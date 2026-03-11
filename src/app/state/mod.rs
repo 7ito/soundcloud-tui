@@ -42,6 +42,7 @@ pub struct AppState {
     pub show_welcome: bool,
     pub error_modal: Option<ErrorModal>,
     pub add_to_playlist_modal: Option<AddToPlaylistModal>,
+    pub logout_confirm_modal: Option<LogoutConfirmModal>,
     pub toast: Option<Toast>,
     pub help_scroll: usize,
     pub auth: AuthState,
@@ -155,6 +156,12 @@ pub struct ErrorModal {
 pub struct AddToPlaylistModal {
     pub track: TrackSummary,
     pub selected_playlist: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogoutConfirmModal {
+    pub username: Option<String>,
+    pub discard_unsaved_changes: bool,
 }
 
 #[derive(Debug, Clone)]
