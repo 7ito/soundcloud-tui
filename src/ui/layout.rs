@@ -9,6 +9,11 @@ pub fn render_app(frame: &mut Frame<'_>, app: &AppState, cover_art: &mut CoverAr
         return;
     }
 
+    if app.visualizer.visible {
+        super::visualizer::render(frame, frame.area(), app);
+        return;
+    }
+
     let layout = geometry::main_layout(frame.area(), app);
 
     if layout.header.is_some() {

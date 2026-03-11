@@ -6,6 +6,7 @@ use crate::{
     player::command::PlayerCommand,
     soundcloud::auth::{AuthorizationRequest, AuthorizedSession},
     soundcloud::models::{PlaylistSummary, TrackSummary},
+    visualizer::VisualizerCommand,
 };
 
 #[derive(Debug, Clone)]
@@ -97,4 +98,5 @@ pub enum AppCommand {
         track: TrackSummary,
     },
     ControlPlayback(PlayerCommand),
+    ControlVisualizer(VisualizerCommand),
 }

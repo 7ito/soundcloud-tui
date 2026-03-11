@@ -12,6 +12,7 @@ anyhow = "1.0"
 arboard = "3.4"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+cpal = "0.16"
 crossterm = { version = "0.29", features = ["bracketed-paste"] }
 dirs = "6.0"
 fern = "0.7"
@@ -19,6 +20,7 @@ log = "0.4"
 open = "5.3"
 rand = "0.8"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+realfft = "3.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 image = "0.25"
 ratatui-image = { version = "10.0.6", default-features = false, features = ["crossterm"] }
@@ -32,3 +34,5 @@ url = "2.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = { version = "0.9", optional = true }
+pipewire = "0.9"
+zbus = { version = "5.5", features = ["tokio"] }

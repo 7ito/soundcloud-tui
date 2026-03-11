@@ -8,6 +8,7 @@ use crate::{
         models::{PlaylistSummary, SearchResults, TrackSummary, UserSummary},
         paging::Page,
     },
+    visualizer::SpectrumFrame,
 };
 
 #[derive(Debug, Clone)]
@@ -148,6 +149,9 @@ pub enum AppEvent {
         title: String,
         error: String,
     },
+    VisualizerFrame(SpectrumFrame),
+    VisualizerCaptureStarted(String),
+    VisualizerCaptureFailed(String),
     PlaybackIntent(PlaybackIntent),
     Player(PlayerEvent),
 }

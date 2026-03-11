@@ -28,6 +28,7 @@ use crate::{
         paging::Page,
     },
     ui::{geometry, theme::Theme, widgets::pane_inner},
+    visualizer::{SpectrumFrame, VisualizerCommand, VisualizerStyle},
 };
 
 #[derive(Debug, Clone)]
@@ -70,6 +71,7 @@ pub struct AppState {
     pub cover_art: CoverArt,
     pub player: PlayerState,
     pub queue: QueueState,
+    pub visualizer: VisualizerState,
     settings: Settings,
     help_requires_acknowledgement: bool,
     content_return_focus: Focus,
@@ -213,6 +215,27 @@ pub struct PlayerState {
 pub struct QueueState {
     pub overlay_visible: bool,
     pub selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualizerState {
+    pub visible: bool,
+    pub style: VisualizerStyle,
+    pub capture_active: bool,
+    pub spectrum: SpectrumFrame,
+    pub status: String,
+}
+
+impl Default for VisualizerState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            style: VisualizerStyle::default(),
+            capture_active: false,
+            spectrum: SpectrumFrame::default(),
+            status: "Press v to start system audio capture.".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -489,7 +512,7 @@ impl AppState {
             auth: AuthState::new(Credentials::default()),
             session: None,
             auth_summary: "Unauthenticated".to_string(),
-            status: "Tab cycles panes, / opens search, z queues selected, Q opens queue, w/l use selected track, W/L use now playing, ? opens help, q quits."
+            status: "Tab cycles panes, / opens search, v opens visualizer, z queues selected, Q opens queue, w/l use selected track, W/L use now playing, ? opens help, q quits."
                 .to_string(),
             tick_count: 0,
             viewport: Viewport {
@@ -536,6 +559,7 @@ impl AppState {
                 repeat_mode: RepeatMode::Off,
             },
             queue: QueueState::default(),
+            visualizer: VisualizerState::default(),
             settings,
             help_requires_acknowledgement: false,
             content_return_focus: Focus::Library,
@@ -952,6 +976,32 @@ impl AppState {
                     format!("Could not start playback for {title}.\n\n{error}"),
                 );
             }
+            AppEvent::VisualizerFrame(frame) => {
+                if !self.visualizer.visible {
+                    return;
+                }
+
+                self.visualizer.capture_active = true;
+                self.visualizer.spectrum = frame;
+            }
+            AppEvent::VisualizerCaptureStarted(message) => {
+                if !self.visualizer.visible {
+                    return;
+                }
+
+                self.visualizer.capture_active = true;
+                self.visualizer.status = message.clone();
+                self.status = message;
+            }
+            AppEvent::VisualizerCaptureFailed(error) => {
+                if !self.visualizer.visible {
+                    return;
+                }
+
+                self.visualizer.capture_active = false;
+                self.visualizer.status = error.clone();
+                self.status = error;
+            }
             AppEvent::PlaybackIntent(intent) => self.apply_playback_intent(intent),
             AppEvent::Player(event) => self.apply_player_event(event),
         }
@@ -1263,7 +1313,7 @@ impl AppState {
             )
         } else {
             format!(
-                "{} help | {} search | {} queue | {} overlay | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit",
+                "{} help | {} search | v visualizer | {} queue | {} overlay | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit",
                 self.settings.keybinding(KeyAction::Help),
                 self.settings.keybinding(KeyAction::Search),
                 self.settings.keybinding(KeyAction::AddToQueue),
@@ -1299,6 +1349,8 @@ impl AppState {
                 self.settings.keybinding(KeyAction::ShowQueue),
                 "General",
             ),
+            help_row("Toggle fullscreen visualizer", "v", "General"),
+            help_row("Cycle visualizer style", "V", "Visualizer"),
             help_row("Add selected track to playlist", "w", "Content"),
             help_row("Add selected track to Liked Songs", "l", "Content"),
             help_row(
@@ -2757,6 +2809,10 @@ impl AppState {
             return;
         }
 
+        if self.visualizer.visible {
+            return;
+        }
+
         if self.error_modal.is_some() {
             self.handle_error_modal_mouse(mouse);
             return;
@@ -3108,6 +3164,11 @@ impl AppState {
                 }
             }
             AppMode::Main => {
+                if self.visualizer.visible {
+                    self.handle_visualizer_key(key);
+                    return;
+                }
+
                 if self.show_help {
                     self.handle_help_key(key);
                     return;
@@ -3198,6 +3259,18 @@ impl AppState {
     }
 
     fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('v'), KeyModifiers::NONE) => {
+                self.toggle_visualizer();
+                return true;
+            }
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => {
+                self.cycle_visualizer_style();
+                return true;
+            }
+            _ => {}
+        }
+
         if self.settings.key_matches(KeyAction::Search, key) {
             self.begin_search_input();
             return true;
@@ -3669,6 +3742,15 @@ impl AppState {
         false
     }
 
+    fn handle_visualizer_key(&mut self, key: KeyEvent) {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.cycle_visualizer_style(),
+            (KeyCode::Char('v'), KeyModifiers::NONE) | (KeyCode::Esc, _) => self.close_visualizer(),
+            _ if self.settings.key_matches(KeyAction::Back, key) => self.close_visualizer(),
+            _ => {}
+        }
+    }
+
     fn handle_auth_intent(&mut self, intent: AuthIntent) {
         match intent {
             AuthIntent::OpenAppsPage => {
@@ -3806,6 +3888,47 @@ impl AppState {
 
     fn queue_command(&mut self, command: AppCommand) {
         self.pending_commands.push(command);
+    }
+
+    fn toggle_visualizer(&mut self) {
+        if self.visualizer.visible {
+            self.close_visualizer();
+        } else {
+            self.open_visualizer();
+        }
+    }
+
+    fn open_visualizer(&mut self) {
+        if self.visualizer.visible {
+            return;
+        }
+
+        self.show_welcome = false;
+        self.visualizer.visible = true;
+        self.visualizer.capture_active = false;
+        self.visualizer.spectrum = SpectrumFrame::default();
+        self.visualizer.status = "Starting system audio capture...".to_string();
+        self.status = format!(
+            "Opened visualizer in {} mode.",
+            self.visualizer.style.label()
+        );
+        self.queue_command(AppCommand::ControlVisualizer(VisualizerCommand::Start));
+    }
+
+    fn close_visualizer(&mut self) {
+        if !self.visualizer.visible {
+            return;
+        }
+
+        self.visualizer.visible = false;
+        self.visualizer.capture_active = false;
+        self.status = "Closed visualizer.".to_string();
+        self.queue_command(AppCommand::ControlVisualizer(VisualizerCommand::Stop));
+    }
+
+    fn cycle_visualizer_style(&mut self) {
+        self.visualizer.style = self.visualizer.style.next();
+        self.status = format!("Visualizer style set to {}.", self.visualizer.style.label());
     }
 
     fn sync_window_title(&mut self) {

@@ -14,5 +14,6 @@ pub mod queue;
 pub mod settings;
 pub mod sidebar;
 pub mod theme;
+pub mod visualizer;
 pub mod welcome;
 pub mod widgets;

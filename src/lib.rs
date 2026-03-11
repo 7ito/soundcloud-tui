@@ -6,3 +6,4 @@ pub mod player;
 pub mod soundcloud;
 pub mod ui;
 pub mod util;
+pub mod visualizer;

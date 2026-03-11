@@ -17,6 +17,7 @@ use soundcloud_tui::{
         paging::Page,
     },
     ui::{geometry, widgets::pane_inner},
+    visualizer::{VisualizerCommand, VisualizerStyle},
 };
 
 #[test]
@@ -713,6 +714,80 @@ fn enter_in_playlists_moves_focus_into_content() {
 
     assert_eq!(app.focus, Focus::Content);
     assert_eq!(app.route, Route::Playlist);
+}
+
+#[test]
+fn v_opens_visualizer_and_queues_capture_start() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::NONE,
+    )));
+
+    assert!(app.visualizer.visible);
+    assert_eq!(app.visualizer.style, VisualizerStyle::Equalizer);
+    match app.take_pending_command() {
+        Some(AppCommand::ControlVisualizer(VisualizerCommand::Start)) => {}
+        other => panic!("expected visualizer start command, got {other:?}"),
+    }
+}
+
+#[test]
+fn esc_closes_visualizer_and_queues_capture_stop() {
+    let mut app = AppState::new();
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::NONE,
+    )));
+    drain_pending_commands(&mut app);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+
+    assert!(!app.visualizer.visible);
+    assert!(!app.should_quit);
+    match app.take_pending_command() {
+        Some(AppCommand::ControlVisualizer(VisualizerCommand::Stop)) => {}
+        other => panic!("expected visualizer stop command, got {other:?}"),
+    }
+}
+
+#[test]
+fn q_closes_visualizer_instead_of_quitting_app() {
+    let mut app = AppState::new();
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::NONE,
+    )));
+    drain_pending_commands(&mut app);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )));
+
+    assert!(!app.visualizer.visible);
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn uppercase_v_cycles_visualizer_style() {
+    let mut app = AppState::new();
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('V'),
+        KeyModifiers::SHIFT,
+    )));
+    assert_eq!(app.visualizer.style, VisualizerStyle::BarGraph);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('V'),
+        KeyModifiers::SHIFT,
+    )));
+    assert_eq!(app.visualizer.style, VisualizerStyle::Equalizer);
 }
 
 #[test]

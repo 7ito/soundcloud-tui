@@ -30,6 +30,7 @@ use soundcloud_tui::{
         service::{PlaylistTrackAddResult, SoundcloudService},
     },
     ui::{self, cover_art::CoverArtRenderer},
+    visualizer::VisualizerHandle,
 };
 use tokio::{sync::mpsc, task::LocalSet};
 
@@ -83,6 +84,7 @@ async fn run() -> Result<()> {
     let mut events = EventHandler::new(Duration::from_millis(tick_rate_ms));
     let (async_tx, mut async_rx) = mpsc::unbounded_channel::<AppEvent>();
     let player = PlayerHandle::spawn(paths.clone(), async_tx.clone());
+    let visualizer = VisualizerHandle::spawn(async_tx.clone());
 
     #[cfg(all(feature = "mpris", target_os = "linux"))]
     let mut mpris = match MprisIntegration::new(async_tx.clone()).await {
@@ -101,25 +103,31 @@ async fn run() -> Result<()> {
     };
 
     loop {
-        drain_commands(&mut app, &paths, &async_tx, &player);
+        drain_commands(&mut app, &paths, &async_tx, &player, &visualizer);
         terminal.draw(&app)?;
 
-        tokio::select! {
+        let sync_mpris = tokio::select! {
             maybe_event = events.next() => {
                 let Some(event) = maybe_event else { break; };
+                let sync_mpris = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
+                sync_mpris
             }
             maybe_async = async_rx.recv() => {
                 let Some(event) = maybe_async else { break; };
+                let sync_mpris = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
+                sync_mpris
             }
-        }
+        };
 
         #[cfg(all(feature = "mpris", target_os = "linux"))]
-        if let Some(integration) = mpris.as_mut() {
-            if let Err(error) = integration.sync_from_app(&app).await {
-                warn!("disabling MPRIS integration after sync failure: {error}");
-                mpris = None;
+        if sync_mpris {
+            if let Some(integration) = mpris.as_mut() {
+                if let Err(error) = integration.sync_from_app(&app).await {
+                    warn!("disabling MPRIS integration after sync failure: {error}");
+                    mpris = None;
+                }
             }
         }
 
@@ -138,9 +146,16 @@ fn drain_commands(
     paths: &AppPaths,
     sender: &mpsc::UnboundedSender<AppEvent>,
     player: &PlayerHandle,
+    visualizer: &VisualizerHandle,
 ) {
     while let Some(command) = app.take_pending_command() {
-        run_command(command, paths.clone(), sender.clone(), player.clone());
+        run_command(
+            command,
+            paths.clone(),
+            sender.clone(),
+            player.clone(),
+            visualizer.clone(),
+        );
     }
 }
 
@@ -149,6 +164,7 @@ fn run_command(
     paths: AppPaths,
     sender: mpsc::UnboundedSender<AppEvent>,
     player: PlayerHandle,
+    visualizer: VisualizerHandle,
 ) {
     match command {
         AppCommand::OpenUrl(url) => {
@@ -609,6 +625,11 @@ fn run_command(
                 let _ = sender.send(AppEvent::Player(
                     soundcloud_tui::player::event::PlayerEvent::BackendError(error.to_string()),
                 ));
+            }
+        }
+        AppCommand::ControlVisualizer(command) => {
+            if let Err(error) = visualizer.send(command) {
+                let _ = sender.send(AppEvent::VisualizerCaptureFailed(error.to_string()));
             }
         }
     }

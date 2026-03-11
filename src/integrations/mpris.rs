@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::info;
+use log::{debug, info};
 use mpris_server::{
     LoopStatus as MprisLoopStatus, Metadata, PlaybackStatus as MprisPlaybackStatus, Player, Time,
     TrackId,
@@ -198,36 +198,43 @@ impl MprisProjection {
 fn connect_callbacks(player: &Player, sender: mpsc::UnboundedSender<AppEvent>) {
     let play_tx = sender.clone();
     player.connect_play(move |_player| {
+        debug!("received MPRIS Play");
         let _ = play_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::Play));
     });
 
     let pause_tx = sender.clone();
     player.connect_pause(move |_player| {
+        debug!("received MPRIS Pause");
         let _ = pause_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::Pause));
     });
 
     let toggle_tx = sender.clone();
     player.connect_play_pause(move |_player| {
+        debug!("received MPRIS PlayPause");
         let _ = toggle_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::TogglePause));
     });
 
     let next_tx = sender.clone();
     player.connect_next(move |_player| {
+        debug!("received MPRIS Next");
         let _ = next_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::Next));
     });
 
     let previous_tx = sender.clone();
     player.connect_previous(move |_player| {
+        debug!("received MPRIS Previous");
         let _ = previous_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::Previous));
     });
 
     let stop_tx = sender.clone();
     player.connect_stop(move |_player| {
+        debug!("received MPRIS Stop");
         let _ = stop_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::Stop));
     });
 
     let seek_tx = sender.clone();
     player.connect_seek(move |_player, offset| {
+        debug!("received MPRIS Seek: {} micros", offset.as_micros());
         let _ = seek_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::SeekRelative {
             seconds: time_to_seconds(offset),
         }));
@@ -235,6 +242,10 @@ fn connect_callbacks(player: &Player, sender: mpsc::UnboundedSender<AppEvent>) {
 
     let set_position_tx = sender.clone();
     player.connect_set_position(move |_player, _track_id, position| {
+        debug!(
+            "received MPRIS SetPosition: {} micros",
+            position.as_micros()
+        );
         let _ = set_position_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::SeekAbsolute {
             seconds: time_to_seconds(position),
         }));
@@ -242,6 +253,7 @@ fn connect_callbacks(player: &Player, sender: mpsc::UnboundedSender<AppEvent>) {
 
     let set_volume_tx = sender.clone();
     player.connect_set_volume(move |_player, volume| {
+        debug!("received MPRIS SetVolume: {volume}");
         let _ = set_volume_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::SetVolume {
             percent: (volume * 100.0).clamp(0.0, 100.0),
         }));
@@ -249,6 +261,7 @@ fn connect_callbacks(player: &Player, sender: mpsc::UnboundedSender<AppEvent>) {
 
     let set_shuffle_tx = sender.clone();
     player.connect_set_shuffle(move |_player, shuffle| {
+        debug!("received MPRIS SetShuffle: {shuffle}");
         let _ = set_shuffle_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::SetShuffle(
             shuffle,
         )));
@@ -256,6 +269,7 @@ fn connect_callbacks(player: &Player, sender: mpsc::UnboundedSender<AppEvent>) {
 
     let set_loop_tx = sender;
     player.connect_set_loop_status(move |_player, loop_status| {
+        debug!("received MPRIS SetLoopStatus: {:?}", loop_status);
         let _ = set_loop_tx.send(AppEvent::PlaybackIntent(PlaybackIntent::SetRepeat(
             repeat_mode_for_loop_status(loop_status),
         )));
