@@ -1,6 +1,5 @@
 use std::{
     io::{ErrorKind, Read, Write},
-    os::unix::net::UnixStream,
     path::Path,
 };
 
@@ -8,14 +7,27 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+
+#[cfg(windows)]
+use interprocess::os::windows::named_pipe::{DuplexPipeStream, pipe_mode};
+
 use crate::player::{command::PlayerCommand, event::PlayerEvent};
 
 #[derive(Debug)]
 pub struct IpcClient {
-    reader: UnixStream,
-    writer: UnixStream,
+    connection: IpcConnection,
     read_buffer: Vec<u8>,
     request_id: u64,
+}
+
+#[derive(Debug)]
+enum IpcConnection {
+    #[cfg(unix)]
+    Unix(UnixStream),
+    #[cfg(windows)]
+    Windows(DuplexPipeStream<pipe_mode::Bytes>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,19 +62,10 @@ struct RawIpcMessage {
 
 impl IpcClient {
     pub fn connect(socket_path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(socket_path).with_context(|| {
-            format!(
-                "could not connect to mpv IPC socket at {}",
-                socket_path.display()
-            )
-        })?;
-        stream.set_nonblocking(true)?;
-        let reader = stream.try_clone()?;
-        reader.set_nonblocking(true)?;
+        let connection = IpcConnection::connect(socket_path)?;
 
         Ok(Self {
-            reader,
-            writer: stream,
+            connection,
             read_buffer: Vec::new(),
             request_id: 1,
         })
@@ -175,12 +178,12 @@ impl IpcClient {
             }
 
             let mut scratch = [0_u8; 4096];
-            match self.reader.read(&mut scratch) {
+            match self.connection.read(&mut scratch) {
                 Ok(0) => {
                     if self.read_buffer.is_empty() {
                         return Ok(Some(IpcMessage::Closed));
                     }
-                    bail!("mpv IPC socket closed before a full JSON message was received");
+                    bail!("mpv IPC connection closed before a full JSON message was received");
                 }
                 Ok(bytes_read) => {
                     self.read_buffer.extend_from_slice(&scratch[..bytes_read]);
@@ -193,8 +196,8 @@ impl IpcClient {
 
     fn send_json(&mut self, value: Value) -> Result<()> {
         let payload = serde_json::to_vec(&value)?;
-        self.writer.write_all(&payload)?;
-        self.writer.write_all(b"\n")?;
+        self.connection.write_all(&payload)?;
+        self.connection.write_all(b"\n")?;
         Ok(())
     }
 
@@ -202,6 +205,69 @@ impl IpcClient {
         let request_id = self.request_id;
         self.request_id = self.request_id.saturating_add(1);
         request_id
+    }
+}
+
+impl IpcConnection {
+    #[cfg(unix)]
+    fn connect(socket_path: &Path) -> Result<Self> {
+        let stream = UnixStream::connect(socket_path).with_context(|| {
+            format!(
+                "could not connect to mpv IPC socket at {}",
+                socket_path.display()
+            )
+        })?;
+        stream.set_nonblocking(true)?;
+        Ok(Self::Unix(stream))
+    }
+
+    #[cfg(windows)]
+    fn connect(socket_path: &Path) -> Result<Self> {
+        let stream = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path(socket_path.as_os_str())
+            .with_context(|| {
+                format!(
+                    "could not connect to mpv IPC pipe at {}",
+                    socket_path.display()
+                )
+            })?;
+        stream.set_nonblocking(true)?;
+        Ok(Self::Windows(stream))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn connect(_socket_path: &Path) -> Result<Self> {
+        bail!("mpv IPC is unsupported on this platform")
+    }
+}
+
+impl Read for IpcConnection {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.read(buf),
+            #[cfg(windows)]
+            Self::Windows(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for IpcConnection {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.write(buf),
+            #[cfg(windows)]
+            Self::Windows(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.flush(),
+            #[cfg(windows)]
+            Self::Windows(stream) => stream.flush(),
+        }
     }
 }
 

@@ -36,3 +36,6 @@ url = "2.5"
 mpris-server = { version = "0.9", optional = true }
 pipewire = "0.9"
 zbus = { version = "5.5", features = ["tokio"] }
+
+[target.'cfg(windows)'.dependencies]
+interprocess = "2.4"

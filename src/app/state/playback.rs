@@ -405,7 +405,12 @@ impl AppState {
             }
             PlayerEvent::BackendError(error) => {
                 self.player.status = PlaybackStatus::Stopped;
-                self.show_main_error("Playback backend error", error);
+                let title = if crate::player::mpv_locator::is_missing_error_message(&error) {
+                    "mpv is not installed"
+                } else {
+                    "Playback backend error"
+                };
+                self.show_main_error(title, error);
             }
         }
     }

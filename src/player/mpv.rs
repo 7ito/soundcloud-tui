@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
@@ -15,6 +14,7 @@ use crate::{
         command::PlayerCommand,
         event::PlayerEvent,
         ipc::{IpcClient, IpcMessage},
+        mpv_locator,
     },
 };
 
@@ -36,11 +36,10 @@ pub struct MpvPlayerBackend {
 impl MpvPlayerBackend {
     pub fn spawn(paths: &AppPaths) -> Result<Self> {
         let socket_path = socket_path(paths);
-        if socket_path.exists() {
-            let _ = fs::remove_file(&socket_path);
-        }
+        cleanup_socket_path(&socket_path);
+        let mpv_path = mpv_locator::discover()?;
 
-        let child = Command::new("mpv")
+        let child = Command::new(&mpv_path)
             .arg("--idle=yes")
             .arg("--no-video")
             .arg("--audio-display=no")
@@ -51,7 +50,7 @@ impl MpvPlayerBackend {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .context("could not spawn mpv - make sure it is installed and on PATH")?;
+            .map_err(|error| mpv_locator::launch_failed(mpv_path.clone(), error))?;
 
         let mut ipc = connect_ipc(&socket_path)?;
         ipc.observe_property(OBSERVE_PAUSE, "pause")?;
@@ -116,7 +115,7 @@ impl PlayerBackend for MpvPlayerBackend {
                 }
                 Some(IpcMessage::Closed) => {
                     return Ok(Some(PlayerEvent::BackendError(
-                        "mpv IPC socket closed unexpectedly".to_string(),
+                        "mpv IPC connection closed unexpectedly".to_string(),
                     )));
                 }
                 None => return Ok(None),
@@ -130,14 +129,35 @@ impl Drop for MpvPlayerBackend {
         let _ = self.ipc.send_command(PlayerCommand::Shutdown);
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = fs::remove_file(&self.socket_path);
+        cleanup_socket_path(&self.socket_path);
     }
 }
 
 fn socket_path(paths: &AppPaths) -> PathBuf {
+    #[cfg(windows)]
+    {
+        return PathBuf::from(format!(
+            r"\\.\pipe\soundcloud-tui-mpv-{}",
+            std::process::id()
+        ));
+    }
+
+    #[cfg(not(windows))]
     paths
         .cache_dir
         .join(format!("mpv-{}.sock", std::process::id()))
+}
+
+fn cleanup_socket_path(socket_path: &Path) {
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = socket_path;
+    }
 }
 
 fn connect_ipc(socket_path: &Path) -> Result<IpcClient> {
@@ -147,15 +167,12 @@ fn connect_ipc(socket_path: &Path) -> Result<IpcClient> {
         match IpcClient::connect(socket_path) {
             Ok(ipc) => return Ok(ipc),
             Err(error) if started.elapsed() < SOCKET_CONNECT_TIMEOUT => {
-                thread::sleep(SOCKET_CONNECT_RETRY);
-                if !socket_path.exists() {
-                    continue;
-                }
                 let _ = error;
+                thread::sleep(SOCKET_CONNECT_RETRY);
             }
             Err(error) => {
                 return Err(anyhow!(error))
-                    .context("timed out waiting for mpv IPC socket to become available");
+                    .context("timed out waiting for mpv IPC endpoint to become available");
             }
         }
     }
