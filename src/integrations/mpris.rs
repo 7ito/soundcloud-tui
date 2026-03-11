@@ -293,21 +293,11 @@ fn playback_status_for_app(app: &AppState) -> MprisPlaybackStatus {
 }
 
 fn can_go_next(app: &AppState) -> bool {
-    let Some(current_index) = app.queue.current_index else {
-        return false;
-    };
-
-    current_index + 1 < app.queue.tracks.len() || app.player.repeat_mode == RepeatMode::Queue
+    app.can_play_next_track()
 }
 
 fn can_go_previous(app: &AppState) -> bool {
-    let Some(current_index) = app.queue.current_index else {
-        return false;
-    };
-
-    app.player.position_seconds > 5.0
-        || current_index > 0
-        || (app.player.repeat_mode == RepeatMode::Queue && !app.queue.tracks.is_empty())
+    app.can_play_previous_track()
 }
 
 fn repeat_mode_for_loop_status(loop_status: MprisLoopStatus) -> RepeatMode {

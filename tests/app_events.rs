@@ -131,12 +131,10 @@ fn track_end_advances_to_next_queue_item() {
     let first = dummy_track("soundcloud:tracks:1", "First Track");
     let second = dummy_track("soundcloud:tracks:2", "Second Track");
     app.session = Some(dummy_session());
-    app.queue.tracks = vec![first.clone(), second.clone()];
-    app.queue.current_index = Some(0);
-    app.now_playing.track = Some(first.clone());
-    app.now_playing.title = first.title.clone();
-    app.now_playing.artist = first.artist.clone();
-    app.now_playing.context = "Liked Songs".to_string();
+    seed_liked_tracks(&mut app, vec![first.clone(), second.clone()]);
+
+    app.select_current_content();
+    drain_pending_commands(&mut app);
 
     app.dispatch_event(AppEvent::Player(PlayerEvent::TrackEnded));
 
@@ -145,8 +143,173 @@ fn track_end_advances_to_next_queue_item() {
         other => panic!("expected PlayTrack command, got {other:?}"),
     }
 
-    assert_eq!(app.queue.current_index, Some(1));
     assert_eq!(app.now_playing.title, second.title);
+}
+
+#[test]
+fn uppercase_q_opens_queue_overlay() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:30", "Queued Track");
+    app.session = Some(dummy_session());
+    seed_liked_tracks(&mut app, vec![track.clone()]);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('Q'),
+        KeyModifiers::SHIFT,
+    )));
+
+    assert!(app.queue.overlay_visible);
+    assert_eq!(app.queue_overlay_rows().len(), 1);
+    assert_eq!(app.queue_overlay_rows()[0].columns[0], track.title);
+}
+
+#[test]
+fn queue_shortcut_appends_without_interrupting_playback() {
+    let mut app = AppState::new();
+    let first = dummy_track("soundcloud:tracks:31", "Playing Track");
+    let second = dummy_track("soundcloud:tracks:32", "Queued Track");
+    app.session = Some(dummy_session());
+    seed_liked_tracks(&mut app, vec![first.clone(), second.clone()]);
+
+    app.select_current_content();
+    drain_pending_commands(&mut app);
+    app.selected_content = 1;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.now_playing.title, first.title);
+    assert!(app.take_pending_command().is_none());
+    assert_eq!(app.queue_overlay_rows().len(), 1);
+    assert_eq!(app.queue_overlay_rows()[0].columns[0], second.title);
+}
+
+#[test]
+fn queue_overlay_enter_starts_selected_track() {
+    let mut app = AppState::new();
+    let first = dummy_track("soundcloud:tracks:33", "First Queue Track");
+    let second = dummy_track("soundcloud:tracks:34", "Second Queue Track");
+    app.session = Some(dummy_session());
+    seed_liked_tracks(&mut app, vec![first.clone(), second.clone()]);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.selected_content = 1;
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('Q'),
+        KeyModifiers::SHIFT,
+    )));
+    app.queue.selected = 1;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track, .. }) => assert_eq!(track.title, second.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+
+    assert!(app.queue.overlay_visible);
+    assert_eq!(app.now_playing.title, second.title);
+    assert_eq!(app.queue_overlay_rows()[0].columns[0], second.title);
+}
+
+#[test]
+fn queue_overlay_d_removes_selected_track() {
+    let mut app = AppState::new();
+    let first = dummy_track("soundcloud:tracks:35", "Keep Me");
+    let second = dummy_track("soundcloud:tracks:36", "Drop Me");
+    app.session = Some(dummy_session());
+    seed_liked_tracks(&mut app, vec![first.clone(), second.clone()]);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.selected_content = 1;
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('Q'),
+        KeyModifiers::SHIFT,
+    )));
+    app.queue.selected = 1;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('d'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.queue_overlay_rows().len(), 1);
+    assert_eq!(app.queue_overlay_rows()[0].columns[0], first.title);
+}
+
+#[test]
+fn manual_selection_preserves_queue_then_resumes_source_tail() {
+    let mut app = AppState::new();
+    let queue_first = dummy_track("soundcloud:tracks:37", "Queue First");
+    let queue_second = dummy_track("soundcloud:tracks:38", "Queue Second");
+    let source_first = dummy_track("soundcloud:tracks:39", "Source First");
+    let source_second = dummy_track("soundcloud:tracks:40", "Source Second");
+    let source_third = dummy_track("soundcloud:tracks:41", "Source Third");
+    app.session = Some(dummy_session());
+
+    seed_liked_tracks(&mut app, vec![queue_first.clone(), queue_second.clone()]);
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+    app.selected_content = 1;
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::NONE,
+    )));
+
+    seed_search_tracks(
+        &mut app,
+        "manual",
+        vec![source_first, source_second.clone(), source_third.clone()],
+    );
+    app.selected_content = 1;
+
+    app.select_current_content();
+    drain_pending_commands(&mut app);
+
+    app.dispatch_event(AppEvent::Player(PlayerEvent::TrackEnded));
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track, .. }) => assert_eq!(track.title, queue_first.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+    assert_eq!(app.now_playing.context, "Queue");
+
+    app.dispatch_event(AppEvent::Player(PlayerEvent::TrackEnded));
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track, .. }) => assert_eq!(track.title, queue_second.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+
+    app.dispatch_event(AppEvent::Player(PlayerEvent::TrackEnded));
+    match app.take_pending_command() {
+        Some(AppCommand::PlayTrack { track, .. }) => assert_eq!(track.title, source_third.title),
+        other => panic!("expected PlayTrack command, got {other:?}"),
+    }
+    assert_eq!(app.now_playing.context, "Search: manual");
 }
 
 #[test]
@@ -337,10 +500,9 @@ fn selecting_content_without_session_does_not_replace_now_playing() {
 
     assert_eq!(app.now_playing.track, None);
     assert_eq!(app.now_playing.title, "Nothing playing");
-    assert!(
-        app.status
-            .contains("Playback is unavailable until SoundCloud authentication is complete")
-    );
+    assert!(app
+        .status
+        .contains("Playback is unavailable until SoundCloud authentication is complete"));
 }
 
 #[test]
@@ -744,12 +906,17 @@ fn lowercase_shortcuts_do_not_run_outside_content() {
             KeyModifiers::NONE,
         )));
         app.dispatch_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('z'),
+            KeyModifiers::NONE,
+        )));
+        app.dispatch_event(AppEvent::Key(KeyEvent::new(
             KeyCode::Char('w'),
             KeyModifiers::NONE,
         )));
 
         assert!(app.take_pending_command().is_none());
         assert!(app.add_to_playlist_modal.is_none());
+        assert!(app.queue_overlay_rows().is_empty());
     }
 }
 
@@ -1087,6 +1254,53 @@ fn dummy_session() -> AuthorizedSession {
             expires_at_epoch: chrono::Utc::now().timestamp() + 3600,
         },
     }
+}
+
+fn drain_pending_commands(app: &mut AppState) {
+    while app.take_pending_command().is_some() {}
+}
+
+fn seed_liked_tracks(app: &mut AppState, tracks: Vec<TrackSummary>) {
+    app.dispatch_event(AppEvent::LikedSongsLoaded {
+        session: dummy_session(),
+        page: Page {
+            items: tracks,
+            next_href: None,
+        },
+        append: false,
+    });
+    app.set_route(Route::LikedSongs);
+    drain_pending_commands(app);
+    app.focus = Focus::Content;
+    app.selected_content = 0;
+}
+
+fn seed_search_tracks(app: &mut AppState, query: &str, tracks: Vec<TrackSummary>) {
+    app.search_query = query.to_string();
+    app.search_cursor = query.chars().count();
+    app.set_route(Route::Search);
+    drain_pending_commands(app);
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        query: query.to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: tracks,
+                next_href: None,
+            },
+            playlists: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+            users: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+        },
+    });
+    drain_pending_commands(app);
+    app.focus = Focus::Content;
+    app.selected_content = 0;
 }
 
 fn dummy_track(urn: &str, title: &str) -> TrackSummary {

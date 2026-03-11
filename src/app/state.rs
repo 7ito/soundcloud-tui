@@ -5,8 +5,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     app::{
-        Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus, PlaybackIntent,
-        RepeatMode, Route, reducer,
+        reducer, Action, AppCommand, AppEvent, AppMode, AuthIntent, AuthState, Focus,
+        PlaybackIntent, RepeatMode, Route,
     },
     config::{
         credentials::Credentials,
@@ -85,6 +85,7 @@ pub struct AppState {
     user_profile_playlists: CollectionState<SoundcloudPlaylist>,
     user_profile_view: UserProfileView,
     search_cache: HashMap<String, SearchCache>,
+    playback_plan: PlaybackPlanState,
     playlists_loading: bool,
     playlists_loaded: bool,
     playlists_error: Option<String>,
@@ -204,8 +205,27 @@ pub struct PlayerState {
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueState {
-    pub tracks: Vec<TrackSummary>,
-    pub current_index: Option<usize>,
+    pub overlay_visible: bool,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PlaybackPlanState {
+    items: Vec<PlaybackPlanItem>,
+    current_index: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct PlaybackPlanItem {
+    track: TrackSummary,
+    context: String,
+    kind: PlaybackPlanItemKind,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum PlaybackPlanItemKind {
+    Source,
+    Queue,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -272,7 +292,7 @@ struct SearchCache {
     users: CollectionState<UserSummary>,
 }
 
-const HELP_ROWS: [HelpRow; 28] = [
+const HELP_ROWS: [HelpRow; 30] = [
     HelpRow {
         description: "Move focus to next pane",
         event: "Tab",
@@ -314,6 +334,11 @@ const HELP_ROWS: [HelpRow; 28] = [
         context: "General",
     },
     HelpRow {
+        description: "Open queue overlay",
+        event: "Q",
+        context: "General",
+    },
+    HelpRow {
         description: "Add selected track to playlist",
         event: "w",
         context: "Content",
@@ -321,6 +346,11 @@ const HELP_ROWS: [HelpRow; 28] = [
     HelpRow {
         description: "Add selected track to Liked Songs",
         event: "l",
+        context: "Content",
+    },
+    HelpRow {
+        description: "Add selected track to queue",
+        event: "z",
         context: "Content",
     },
     HelpRow {
@@ -458,11 +488,23 @@ const SEARCH_HELP_ROWS: [HelpRow; 8] = [
     },
 ];
 
-const CONTENT_HELP_ROWS: [HelpRow; 1] = [HelpRow {
-    description: "Escape back to previously navigated pane",
-    event: "Esc",
-    context: "Tracks/Album/User",
-}];
+const CONTENT_HELP_ROWS: [HelpRow; 3] = [
+    HelpRow {
+        description: "Escape back to previously navigated pane",
+        event: "Esc",
+        context: "Tracks/Album/User",
+    },
+    HelpRow {
+        description: "Play the selected queued track",
+        event: "Enter",
+        context: "Queue overlay",
+    },
+    HelpRow {
+        description: "Remove the selected queued track",
+        event: "d",
+        context: "Queue overlay",
+    },
+];
 
 impl<T> Default for CollectionState<T> {
     fn default() -> Self {
@@ -637,7 +679,7 @@ impl AppState {
             auth: AuthState::new(Credentials::default()),
             session: None,
             auth_summary: "Unauthenticated".to_string(),
-            status: "Tab cycles panes, / opens search, w/l use selected track, W/L use now playing, ? opens help, q quits."
+            status: "Tab cycles panes, / opens search, z queues selected, Q opens queue, w/l use selected track, W/L use now playing, ? opens help, q quits."
                 .to_string(),
             tick_count: 0,
             viewport: Viewport {
@@ -704,6 +746,7 @@ impl AppState {
             user_profile_playlists: CollectionState::default(),
             user_profile_view: UserProfileView::Tracks,
             search_cache: HashMap::new(),
+            playback_plan: PlaybackPlanState::default(),
             playlists_loading: false,
             playlists_loaded: false,
             playlists_error: None,
@@ -1402,7 +1445,7 @@ impl AppState {
         if self.show_help {
             "Esc closes help | Ctrl+d/u scroll | ? toggles"
         } else {
-            "? help | / search | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit"
+            "? help | / search | z queue | Q overlay | w/l selected | W/L current | Tab panes | j/k move | Enter select | q quit"
         }
     }
 
@@ -1464,12 +1507,15 @@ impl AppState {
     }
 
     pub fn queue_status_label(&self) -> String {
-        let queue_len = self.queue.tracks.len();
-        let queue_position = self
-            .queue
-            .current_index
-            .map(|index| format!("{}/{}", index + 1, queue_len.max(1)))
-            .unwrap_or_else(|| format!("0/{}", queue_len));
+        let queue_len = self.visible_queue_indices().len();
+        let queue_position = if matches!(
+            self.current_playback_plan_item().map(|item| item.kind),
+            Some(PlaybackPlanItemKind::Queue)
+        ) {
+            format!("1/{}", queue_len.max(1))
+        } else {
+            format!("0/{}", queue_len)
+        };
 
         format!(
             "Queue {} | Repeat {} | Shuffle {}",
@@ -1481,6 +1527,158 @@ impl AppState {
                 "Off"
             }
         )
+    }
+
+    pub fn queue_overlay_rows(&self) -> Vec<ContentRow> {
+        self.visible_queue_indices()
+            .into_iter()
+            .filter_map(|index| {
+                self.playback_plan.items.get(index).map(|item| ContentRow {
+                    columns: [
+                        item.track.title.clone(),
+                        item.track.artist.clone(),
+                        self.queue_state_label_for_index(index),
+                        item.track.duration_label(),
+                    ],
+                })
+            })
+            .collect()
+    }
+
+    pub fn queue_overlay_selection(&self) -> Option<usize> {
+        (!self.visible_queue_indices().is_empty()).then_some(
+            self.queue
+                .selected
+                .min(self.visible_queue_indices().len().saturating_sub(1)),
+        )
+    }
+
+    pub fn can_play_next_track(&self) -> bool {
+        self.next_playback_index().is_some()
+    }
+
+    pub fn can_play_previous_track(&self) -> bool {
+        self.player.position_seconds > 5.0 || self.previous_playback_index().is_some()
+    }
+
+    fn current_playback_plan_item(&self) -> Option<&PlaybackPlanItem> {
+        self.playback_plan
+            .current_index
+            .and_then(|index| self.playback_plan.items.get(index))
+    }
+
+    fn visible_queue_indices(&self) -> Vec<usize> {
+        let start = match self.playback_plan.current_index {
+            Some(index)
+                if matches!(
+                    self.playback_plan.items.get(index).map(|item| item.kind),
+                    Some(PlaybackPlanItemKind::Queue)
+                ) =>
+            {
+                index
+            }
+            Some(index) => index.saturating_add(1),
+            None => 0,
+        };
+
+        self.playback_plan
+            .items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .filter_map(|(index, item)| (item.kind == PlaybackPlanItemKind::Queue).then_some(index))
+            .collect()
+    }
+
+    fn pending_queue_items(&self) -> Vec<PlaybackPlanItem> {
+        let start = self
+            .playback_plan
+            .current_index
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0);
+
+        self.playback_plan
+            .items
+            .iter()
+            .skip(start)
+            .filter(|item| item.kind == PlaybackPlanItemKind::Queue)
+            .cloned()
+            .collect()
+    }
+
+    fn queue_state_label_for_index(&self, index: usize) -> String {
+        if self.playback_plan.current_index == Some(index) {
+            "Playing".to_string()
+        } else if self
+            .visible_queue_indices()
+            .first()
+            .copied()
+            .is_some_and(|first| first == index)
+        {
+            "Next".to_string()
+        } else {
+            "Queued".to_string()
+        }
+    }
+
+    fn build_plan_item(
+        &self,
+        track: TrackSummary,
+        context: String,
+        kind: PlaybackPlanItemKind,
+    ) -> PlaybackPlanItem {
+        PlaybackPlanItem {
+            track,
+            context,
+            kind,
+        }
+    }
+
+    fn rebuild_playback_plan_for_source(
+        &mut self,
+        tracks: Vec<TrackSummary>,
+        current_index: usize,
+        context: String,
+    ) {
+        let pending_queue = self.pending_queue_items();
+        let mut items = tracks
+            .into_iter()
+            .map(|track| self.build_plan_item(track, context.clone(), PlaybackPlanItemKind::Source))
+            .collect::<Vec<_>>();
+
+        items.splice(
+            current_index.saturating_add(1)..current_index.saturating_add(1),
+            pending_queue,
+        );
+        self.playback_plan.items = items;
+        self.playback_plan.current_index = Some(current_index);
+        self.queue.selected = 0;
+    }
+
+    fn append_track_to_queue(&mut self, track: TrackSummary) {
+        let item = self.build_plan_item(
+            track.clone(),
+            "Queue".to_string(),
+            PlaybackPlanItemKind::Queue,
+        );
+
+        if let Some(current_index) = self.playback_plan.current_index {
+            let mut insert_at = current_index.saturating_add(1);
+            while self
+                .playback_plan
+                .items
+                .get(insert_at)
+                .is_some_and(|existing| existing.kind == PlaybackPlanItemKind::Queue)
+            {
+                insert_at += 1;
+            }
+            self.playback_plan.items.insert(insert_at, item);
+        } else {
+            self.playback_plan.items.push(item);
+        }
+
+        self.queue.selected = self.visible_queue_indices().len().saturating_sub(1);
+        self.status = format!("Queued {}.", track.title);
     }
 
     pub fn help_visible_rows(&self) -> usize {
@@ -1546,11 +1744,9 @@ impl AppState {
         match self.current_selected_content() {
             Some(SelectedContent::Track { track, context }) => {
                 if let Some((tracks, current_index)) = self.current_track_queue_selection() {
-                    self.queue.tracks = tracks;
-                    self.queue.current_index = Some(current_index);
+                    self.rebuild_playback_plan_for_source(tracks, current_index, context.clone());
                 } else {
-                    self.queue.tracks = vec![track.clone()];
-                    self.queue.current_index = Some(0);
+                    self.rebuild_playback_plan_for_source(vec![track.clone()], 0, context.clone());
                 }
                 self.start_track_playback(track, context);
             }
@@ -1816,23 +2012,23 @@ impl AppState {
     }
 
     fn play_next_track(&mut self) {
-        let Some(next_index) = self.next_queue_index() else {
+        let Some(next_index) = self.next_playback_index() else {
             self.status = "Reached the end of the queue.".to_string();
             return;
         };
 
-        let Some(track) = self.queue.tracks.get(next_index).cloned() else {
+        let Some(item) = self.playback_plan.items.get(next_index).cloned() else {
             self.status = "Reached the end of the queue.".to_string();
             return;
         };
 
-        self.queue.current_index = Some(next_index);
-        self.start_track_playback(track, self.now_playing.context.clone());
+        self.playback_plan.current_index = Some(next_index);
+        self.start_track_playback(item.track, item.context);
     }
 
-    fn next_queue_index(&self) -> Option<usize> {
-        let current_index = self.queue.current_index?;
-        let track_count = self.queue.tracks.len();
+    fn next_playback_index(&self) -> Option<usize> {
+        let current_index = self.playback_plan.current_index?;
+        let track_count = self.playback_plan.items.len();
 
         if current_index + 1 < track_count {
             Some(current_index + 1)
@@ -1843,27 +2039,45 @@ impl AppState {
         }
     }
 
+    fn previous_playback_index(&self) -> Option<usize> {
+        let current_index = self.playback_plan.current_index?;
+        let track_count = self.playback_plan.items.len();
+
+        if current_index > 0 {
+            Some(current_index - 1)
+        } else if self.player.repeat_mode == RepeatMode::Queue && track_count > 0 {
+            Some(track_count.saturating_sub(1))
+        } else {
+            None
+        }
+    }
+
     fn restart_current_track(&mut self) -> bool {
         let track = self
-            .queue
-            .current_index
-            .and_then(|index| self.queue.tracks.get(index).cloned())
-            .or_else(|| self.now_playing.track.clone());
+            .current_playback_plan_item()
+            .cloned()
+            .map(|item| (item.track, item.context))
+            .or_else(|| {
+                self.now_playing
+                    .track
+                    .clone()
+                    .map(|track| (track, self.now_playing.context.clone()))
+            });
 
-        let Some(track) = track else {
+        let Some((track, context)) = track else {
             self.status = "Nothing queued for playback.".to_string();
             return false;
         };
 
-        self.start_track_playback(track, self.now_playing.context.clone());
+        self.start_track_playback(track, context);
         true
     }
 
     fn play_previous_track(&mut self) {
-        let Some(current_index) = self.queue.current_index else {
+        if self.playback_plan.current_index.is_none() {
             self.status = "Nothing queued for playback.".to_string();
             return;
-        };
+        }
 
         if self.player.position_seconds > 5.0 {
             self.queue_command(AppCommand::ControlPlayback(PlayerCommand::SeekAbsolute {
@@ -1873,22 +2087,18 @@ impl AppState {
             return;
         }
 
-        let previous_index = if current_index > 0 {
-            current_index - 1
-        } else if self.player.repeat_mode == RepeatMode::Queue && !self.queue.tracks.is_empty() {
-            self.queue.tracks.len().saturating_sub(1)
-        } else {
+        let Some(previous_index) = self.previous_playback_index() else {
             self.status = "Already at the start of the queue.".to_string();
             return;
         };
 
-        let Some(track) = self.queue.tracks.get(previous_index).cloned() else {
+        let Some(item) = self.playback_plan.items.get(previous_index).cloned() else {
             self.status = "Already at the start of the queue.".to_string();
             return;
         };
 
-        self.queue.current_index = Some(previous_index);
-        self.start_track_playback(track, self.now_playing.context.clone());
+        self.playback_plan.current_index = Some(previous_index);
+        self.start_track_playback(item.track, item.context);
     }
 
     fn apply_player_event(&mut self, event: PlayerEvent) {
@@ -1928,7 +2138,7 @@ impl AppState {
                     if !self.restart_current_track() {
                         self.status = "Reached the end of the queue.".to_string();
                     }
-                } else if self.next_queue_index().is_some() {
+                } else if self.next_playback_index().is_some() {
                     self.play_next_track();
                 } else {
                     self.status = "Reached the end of the queue.".to_string();
@@ -2455,6 +2665,11 @@ impl AppState {
                     return;
                 }
 
+                if self.queue.overlay_visible {
+                    self.handle_queue_key(key);
+                    return;
+                }
+
                 if self.show_welcome {
                     self.show_welcome = false;
                 }
@@ -2496,10 +2711,29 @@ impl AppState {
         }
     }
 
+    fn handle_queue_key(&mut self, key: KeyEvent) {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => self.close_queue_overlay(),
+            (KeyCode::Enter, _) => self.play_selected_queue_track(),
+            (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                self.move_queue_selection(true)
+            }
+            (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                self.move_queue_selection(false)
+            }
+            (KeyCode::Char('d'), KeyModifiers::NONE) => self.remove_selected_queue_track(),
+            _ => {}
+        }
+    }
+
     fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
         match (key.code, key.modifiers) {
             (KeyCode::Char('/'), KeyModifiers::NONE) => {
                 self.begin_search_input();
+                true
+            }
+            (KeyCode::Char('z'), KeyModifiers::NONE) if self.focus == Focus::Content => {
+                self.queue_selected_track();
                 true
             }
             (KeyCode::Char('w'), KeyModifiers::NONE) if self.focus == Focus::Content => {
@@ -2508,6 +2742,10 @@ impl AppState {
             }
             (KeyCode::Char('l'), KeyModifiers::NONE) if self.focus == Focus::Content => {
                 self.like_selected_track();
+                true
+            }
+            (KeyCode::Char('Q'), KeyModifiers::SHIFT) => {
+                self.open_queue_overlay();
                 true
             }
             (KeyCode::Char('W'), KeyModifiers::SHIFT) => {
@@ -2711,6 +2949,104 @@ impl AppState {
 
     fn now_playing_shortcut_target(&self) -> Option<TrackSummary> {
         self.now_playing.track.clone()
+    }
+
+    fn open_queue_overlay(&mut self) {
+        self.queue.overlay_visible = true;
+        self.queue.selected = self
+            .queue_overlay_selection()
+            .unwrap_or(0)
+            .min(self.visible_queue_indices().len().saturating_sub(1));
+        self.status = if self.visible_queue_indices().is_empty() {
+            "Queue is empty.".to_string()
+        } else {
+            "Opened queue overlay.".to_string()
+        };
+    }
+
+    fn close_queue_overlay(&mut self) {
+        self.queue.overlay_visible = false;
+        self.status = "Closed queue overlay.".to_string();
+    }
+
+    fn move_queue_selection(&mut self, down: bool) {
+        let len = self.visible_queue_indices().len();
+        if len == 0 {
+            self.status = "Queue is empty.".to_string();
+            return;
+        }
+
+        if down {
+            self.queue.selected = self
+                .queue
+                .selected
+                .saturating_add(1)
+                .min(len.saturating_sub(1));
+        } else {
+            self.queue.selected = self.queue.selected.saturating_sub(1);
+        }
+
+        if let Some(row) = self
+            .queue_overlay_rows()
+            .get(self.queue.selected.min(len.saturating_sub(1)))
+        {
+            self.status = format!("Queued {} highlighted.", row.columns[0]);
+        }
+    }
+
+    fn queue_selected_track(&mut self) {
+        let Some(track) = self.selected_track_shortcut_target() else {
+            self.status = "Select a track first.".to_string();
+            return;
+        };
+
+        self.append_track_to_queue(track);
+    }
+
+    fn play_selected_queue_track(&mut self) {
+        let indices = self.visible_queue_indices();
+        let Some(plan_index) = indices
+            .get(self.queue.selected.min(indices.len().saturating_sub(1)))
+            .copied()
+        else {
+            self.status = "Queue is empty.".to_string();
+            return;
+        };
+
+        let Some(item) = self.playback_plan.items.get(plan_index).cloned() else {
+            self.status = "Queue is empty.".to_string();
+            return;
+        };
+
+        self.playback_plan.current_index = Some(plan_index);
+        self.start_track_playback(item.track, item.context);
+    }
+
+    fn remove_selected_queue_track(&mut self) {
+        let indices = self.visible_queue_indices();
+        let Some(plan_index) = indices
+            .get(self.queue.selected.min(indices.len().saturating_sub(1)))
+            .copied()
+        else {
+            self.status = "Queue is empty.".to_string();
+            return;
+        };
+
+        if self.playback_plan.current_index == Some(plan_index) {
+            self.status = "Can't remove the currently playing queued track.".to_string();
+            return;
+        }
+
+        let removed = self.playback_plan.items.remove(plan_index);
+        if let Some(current_index) = self.playback_plan.current_index.as_mut() {
+            if plan_index < *current_index {
+                *current_index = (*current_index).saturating_sub(1);
+            }
+        }
+
+        let len = self.visible_queue_indices().len();
+        self.queue.selected = self.queue.selected.min(len.saturating_sub(1));
+        self.status = format!("Removed {} from the queue.", removed.track.title);
     }
 
     fn open_add_to_playlist_modal_for_selected_track(&mut self) {
@@ -3172,6 +3508,7 @@ impl AppState {
         self.selected_content = 0;
         self.add_to_playlist_modal = None;
         self.queue = QueueState::default();
+        self.playback_plan = PlaybackPlanState::default();
         self.player = PlayerState {
             status: PlaybackStatus::Stopped,
             volume_percent: 50.0,

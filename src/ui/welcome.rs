@@ -1,9 +1,9 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Clear, Paragraph, Wrap},
+    Frame,
 };
 
 use crate::{
@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             Style::default().fg(Theme::default().muted),
         )),
         Line::from(Span::styled(
-            "Press / to search, Tab to move panes, Enter to open, ? for help",
+            "Press / to search, z to queue, Q to view queue, Tab to move panes, Enter to open",
             Style::default().fg(Theme::default().muted),
         )),
         Line::from(Span::styled(

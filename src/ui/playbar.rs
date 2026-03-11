@@ -1,9 +1,9 @@
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, LineGauge, Padding, Paragraph, Wrap},
+    Frame,
 };
 
 use crate::{
@@ -15,10 +15,12 @@ use crate::{
     },
 };
 
-const CONTROLS: [&str; 9] = [
+const CONTROLS: [&str; 11] = [
     "[Prev]",
     "[Play/Pause]",
     "[Next]",
+    "[Q Queue]",
+    "[z Add]",
     "[Shuffle]",
     "[Repeat]",
     "[W Playlist]",
@@ -159,14 +161,9 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
 fn playbar_title(app: &AppState) -> String {
     format!(
-        " {} | Shuffle: {} | Repeat: {} | Volume: {:.0}% ",
+        " {} | {} | Volume: {:.0}% ",
         app.player.status.label(),
-        if app.player.shuffle_enabled {
-            "On"
-        } else {
-            "Off"
-        },
-        app.player.repeat_mode.label(),
+        app.queue_status_label(),
         app.player.volume_percent.round()
     )
 }

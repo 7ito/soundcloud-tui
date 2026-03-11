@@ -1,6 +1,6 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout},
+    Frame,
 };
 
 use crate::app::{AppMode, AppState};
@@ -66,6 +66,10 @@ pub fn render_app(frame: &mut Frame<'_>, app: &AppState, cover_art: &mut CoverAr
 
     if app.add_to_playlist_modal.is_some() {
         super::add_to_playlist_modal::render(frame, frame.area(), app);
+    }
+
+    if app.queue.overlay_visible {
+        super::queue::render(frame, frame.area(), app);
     }
 
     if app.error_modal.is_some() {

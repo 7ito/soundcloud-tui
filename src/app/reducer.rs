@@ -82,7 +82,7 @@ fn move_selection(state: &mut AppState, up: bool) {
         }
         Focus::Playbar => {
             state.status =
-                "Use Space to toggle, </> to seek, +/- for volume, n/p for queue.".to_string();
+                "Use Space to toggle, </> to seek, +/- for volume, n/p to skip, Q to view queue, z to add from content.".to_string();
         }
     }
 }

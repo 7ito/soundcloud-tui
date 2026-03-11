@@ -9,6 +9,7 @@ pub mod header;
 pub mod help;
 pub mod layout;
 pub mod playbar;
+pub mod queue;
 pub mod sidebar;
 pub mod theme;
 pub mod welcome;
