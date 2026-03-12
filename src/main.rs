@@ -57,7 +57,7 @@ async fn main() {
     let local = LocalSet::new();
 
     if let Err(error) = local.run_until(run()).await {
-        eprintln!("soundcloud-tui failed: {error:?}");
+        eprintln!("soundcloud-tui failed: {error:#}");
     }
 }
 
