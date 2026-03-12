@@ -4,15 +4,25 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use log::info;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[cfg(windows)]
+use log::info;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 #[cfg(windows)]
-use interprocess::os::windows::named_pipe::{DuplexPipeStream, pipe_mode};
+use std::{
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
+};
+
+#[cfg(windows)]
+use interprocess::os::windows::named_pipe::{
+    DuplexPipeStream, RecvPipeStream, SendPipeStream, pipe_mode,
+};
 
 use crate::player::{command::PlayerCommand, event::PlayerEvent};
 
@@ -21,7 +31,6 @@ pub struct IpcClient {
     connection: IpcConnection,
     read_buffer: Vec<u8>,
     request_id: u64,
-    read_trace_budget: usize,
 }
 
 #[derive(Debug)]
@@ -29,7 +38,14 @@ enum IpcConnection {
     #[cfg(unix)]
     Unix(UnixStream),
     #[cfg(windows)]
-    Windows(DuplexPipeStream<pipe_mode::Bytes>),
+    Windows(WindowsPipeConnection),
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsPipeConnection {
+    writer: SendPipeStream<pipe_mode::Bytes>,
+    reader_rx: Receiver<std::result::Result<IpcMessage, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +86,6 @@ impl IpcClient {
             connection,
             read_buffer: Vec::new(),
             request_id: 1,
-            read_trace_budget: initial_read_trace_budget(),
         })
     }
 
@@ -169,53 +184,30 @@ impl IpcClient {
     }
 
     pub fn poll_message(&mut self) -> Result<Option<IpcMessage>> {
-        loop {
-            if let Some(newline) = self.read_buffer.iter().position(|byte| *byte == b'\n') {
-                let line = self.read_buffer.drain(..=newline).collect::<Vec<_>>();
-                let text = String::from_utf8(line)?.trim().to_string();
-                if text.is_empty() {
-                    continue;
-                }
+        #[cfg(windows)]
+        {
+            return self.connection.poll_message();
+        }
 
-                return Ok(Some(parse_message(&text)?));
+        #[cfg(not(windows))]
+        loop {
+            if let Some(message) = drain_buffered_message(&mut self.read_buffer)? {
+                return Ok(Some(message));
             }
 
             let mut scratch = [0_u8; 4096];
-            let trace_read = self.take_read_trace();
-            if trace_read {
-                info!(
-                    "reading mpv IPC bytes on Windows: buffered_bytes={}",
-                    self.read_buffer.len()
-                );
-            }
             match self.connection.read(&mut scratch) {
                 Ok(0) => {
-                    if trace_read {
-                        info!("mpv IPC read returned EOF");
-                    }
                     if self.read_buffer.is_empty() {
                         return Ok(Some(IpcMessage::Closed));
                     }
                     bail!("mpv IPC connection closed before a full JSON message was received");
                 }
                 Ok(bytes_read) => {
-                    if trace_read {
-                        info!("mpv IPC read returned {bytes_read} bytes");
-                    }
                     self.read_buffer.extend_from_slice(&scratch[..bytes_read]);
                 }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    if trace_read {
-                        info!("mpv IPC read would block");
-                    }
-                    return Ok(None);
-                }
-                Err(error) => {
-                    if trace_read {
-                        info!("mpv IPC read failed: {error}");
-                    }
-                    return Err(error.into());
-                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -231,15 +223,6 @@ impl IpcClient {
         let request_id = self.request_id;
         self.request_id = self.request_id.saturating_add(1);
         request_id
-    }
-
-    fn take_read_trace(&mut self) -> bool {
-        if self.read_trace_budget == 0 {
-            return false;
-        }
-
-        self.read_trace_budget = self.read_trace_budget.saturating_sub(1);
-        true
     }
 }
 
@@ -265,8 +248,11 @@ impl IpcConnection {
                     socket_path.display()
                 )
             })?;
-        stream.set_nonblocking(true)?;
-        Ok(Self::Windows(stream))
+        let (reader, writer) = stream.split();
+        Ok(Self::Windows(WindowsPipeConnection {
+            writer,
+            reader_rx: spawn_windows_reader(reader),
+        }))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -276,13 +262,17 @@ impl IpcConnection {
 }
 
 #[cfg(windows)]
-fn initial_read_trace_budget() -> usize {
-    12
-}
-
-#[cfg(not(windows))]
-fn initial_read_trace_budget() -> usize {
-    0
+impl IpcConnection {
+    fn poll_message(&mut self) -> Result<Option<IpcMessage>> {
+        match self {
+            Self::Windows(connection) => match connection.reader_rx.try_recv() {
+                Ok(Ok(message)) => Ok(Some(message)),
+                Ok(Err(error)) => bail!(error),
+                Err(TryRecvError::Empty) => Ok(None),
+                Err(TryRecvError::Disconnected) => Ok(Some(IpcMessage::Closed)),
+            },
+        }
+    }
 }
 
 impl Read for IpcConnection {
@@ -291,7 +281,7 @@ impl Read for IpcConnection {
             #[cfg(unix)]
             Self::Unix(stream) => stream.read(buf),
             #[cfg(windows)]
-            Self::Windows(stream) => stream.read(buf),
+            Self::Windows(_) => unreachable!("Windows IPC reads are handled by a reader thread"),
         }
     }
 }
@@ -302,7 +292,7 @@ impl Write for IpcConnection {
             #[cfg(unix)]
             Self::Unix(stream) => stream.write(buf),
             #[cfg(windows)]
-            Self::Windows(stream) => stream.write(buf),
+            Self::Windows(connection) => connection.writer.write(buf),
         }
     }
 
@@ -311,9 +301,115 @@ impl Write for IpcConnection {
             #[cfg(unix)]
             Self::Unix(stream) => stream.flush(),
             #[cfg(windows)]
-            Self::Windows(stream) => stream.flush(),
+            Self::Windows(connection) => connection.writer.flush(),
         }
     }
+}
+
+fn drain_buffered_message(read_buffer: &mut Vec<u8>) -> Result<Option<IpcMessage>> {
+    loop {
+        let Some(newline) = read_buffer.iter().position(|byte| *byte == b'\n') else {
+            return Ok(None);
+        };
+
+        let line = read_buffer.drain(..=newline).collect::<Vec<_>>();
+        let text = String::from_utf8(line)?.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        return Ok(Some(parse_message(&text)?));
+    }
+}
+
+#[cfg(windows)]
+fn spawn_windows_reader(
+    mut reader: RecvPipeStream<pipe_mode::Bytes>,
+) -> Receiver<std::result::Result<IpcMessage, String>> {
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let mut read_buffer = Vec::new();
+        let mut read_trace_budget = 12usize;
+
+        loop {
+            let mut scratch = [0_u8; 4096];
+            let trace_read = take_read_trace(&mut read_trace_budget);
+            if trace_read {
+                info!(
+                    "reading mpv IPC bytes on Windows: buffered_bytes={}",
+                    read_buffer.len()
+                );
+            }
+
+            match reader.read(&mut scratch) {
+                Ok(0) => {
+                    if trace_read {
+                        info!("mpv IPC read returned EOF");
+                    }
+                    let message = if read_buffer.is_empty() {
+                        Ok(IpcMessage::Closed)
+                    } else {
+                        Err(
+                            "mpv IPC connection closed before a full JSON message was received"
+                                .to_string(),
+                        )
+                    };
+                    let _ = sender.send(message);
+                    break;
+                }
+                Ok(bytes_read) => {
+                    if trace_read {
+                        info!("mpv IPC read returned {bytes_read} bytes");
+                    }
+                    read_buffer.extend_from_slice(&scratch[..bytes_read]);
+                    if !forward_buffered_messages(&mut read_buffer, &sender) {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    if trace_read {
+                        info!("mpv IPC read failed: {error}");
+                    }
+                    let _ = sender.send(Err(error.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+
+    receiver
+}
+
+#[cfg(windows)]
+fn forward_buffered_messages(
+    read_buffer: &mut Vec<u8>,
+    sender: &mpsc::Sender<std::result::Result<IpcMessage, String>>,
+) -> bool {
+    loop {
+        match drain_buffered_message(read_buffer) {
+            Ok(Some(message)) => {
+                if sender.send(Ok(message)).is_err() {
+                    return false;
+                }
+            }
+            Ok(None) => return true,
+            Err(error) => {
+                let _ = sender.send(Err(error.to_string()));
+                return false;
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn take_read_trace(remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+
+    *remaining = (*remaining).saturating_sub(1);
+    true
 }
 
 pub fn parse_message(text: &str) -> Result<IpcMessage> {
