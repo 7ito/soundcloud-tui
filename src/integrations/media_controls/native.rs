@@ -1,3 +1,5 @@
+use std::ffi::c_void;
+
 use anyhow::{Context, Result};
 use log::{debug, info};
 use souvlaki::{
@@ -154,7 +156,7 @@ fn bootstrap_macos_application() -> Result<()> {
 
 #[cfg(target_os = "windows")]
 struct HiddenWindow {
-    hwnd: windows::Win32::Foundation::HWND,
+    hwnd: *mut c_void,
     thread_id: u32,
     join_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -162,11 +164,10 @@ struct HiddenWindow {
 #[cfg(target_os = "windows")]
 impl HiddenWindow {
     fn new() -> Result<Self> {
-        use std::{ffi::c_void, sync::mpsc, thread};
+        use std::{sync::mpsc, thread};
 
         use windows::{
             Win32::{
-                Foundation::HWND,
                 System::Threading::GetCurrentThreadId,
                 UI::WindowsAndMessaging::{
                     CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
@@ -176,7 +177,7 @@ impl HiddenWindow {
             core::w,
         };
 
-        let (sender, receiver) = mpsc::sync_channel::<Result<(HWND, u32)>>(1);
+        let (sender, receiver) = mpsc::sync_channel::<Result<(isize, u32)>>(1);
         let join_handle = thread::spawn(move || unsafe {
             let thread_id = GetCurrentThreadId();
             let hwnd = match CreateWindowExW(
@@ -202,7 +203,7 @@ impl HiddenWindow {
                 }
             };
 
-            let _ = sender.send(Ok((hwnd, thread_id)));
+            let _ = sender.send(Ok((hwnd.0 as isize, thread_id)));
 
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).into() {
@@ -216,14 +217,14 @@ impl HiddenWindow {
             .context("could not receive hidden Windows media controls window handle")??;
 
         Ok(Self {
-            hwnd,
+            hwnd: hwnd as *mut c_void,
             thread_id,
             join_handle: Some(join_handle),
         })
     }
 
     fn hwnd(&self) -> *mut c_void {
-        self.hwnd.0
+        self.hwnd
     }
 }
 
