@@ -2,6 +2,13 @@
 name = "soundcloud-tui"
 version = "0.1.0"
 edition = "2024"
+description = "A SoundCloud client for the terminal written in Rust, powered by Ratatui, heavily inspired by spotatui (spotify-tui)."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/7ito/soundcloud-tui"
+homepage = "https://github.com/7ito/soundcloud-tui"
+keywords = ["soundcloud", "terminal", "tui", "ratatui"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [features]
 default = ["mpris"]
