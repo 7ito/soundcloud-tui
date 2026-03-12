@@ -50,6 +50,8 @@ If `mpv` is not already installed:
 
 AUR, Homebrew, and WinGet packages are planned for the initial release. Until then, building from source is the supported installation path.
 
+Packaged macOS releases currently target Apple Silicon only.
+
 Packaging notes for the initial release live in [`docs/packaging.md`](docs/packaging.md).
 
 ## Inspiration

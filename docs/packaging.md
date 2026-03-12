@@ -6,14 +6,13 @@ This project is being prepared for distribution through AUR, Homebrew, and WinGe
 
 - Tag releases as `vX.Y.Z`
 - Pushing a version tag triggers `.github/workflows/release.yml`
-- The workflow builds release archives for Linux, macOS, and Windows
+- The workflow builds release archives for Linux, Apple Silicon macOS, and Windows
 - Each archive includes the binary, `README.md`, and `LICENSE`
 - A `SHA256SUMS` file is attached to the GitHub release for packagers
 
 The generated asset names follow this pattern:
 
 - `soundcloud-tui-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
-- `soundcloud-tui-vX.Y.Z-x86_64-apple-darwin.tar.gz`
 - `soundcloud-tui-vX.Y.Z-aarch64-apple-darwin.tar.gz`
 - `soundcloud-tui-vX.Y.Z-x86_64-pc-windows-msvc.zip`
 

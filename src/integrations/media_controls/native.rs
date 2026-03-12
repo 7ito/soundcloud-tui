@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use log::{debug, info};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
@@ -162,11 +162,10 @@ struct HiddenWindow {
 #[cfg(target_os = "windows")]
 impl HiddenWindow {
     fn new() -> Result<Self> {
-        use std::{sync::mpsc, thread};
+        use std::{ffi::c_void, sync::mpsc, thread};
 
         use windows::{
             Win32::{
-                Foundation::HWND,
                 System::Threading::GetCurrentThreadId,
                 UI::WindowsAndMessaging::{
                     CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
@@ -176,10 +175,10 @@ impl HiddenWindow {
             core::w,
         };
 
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel::<Result<(*mut c_void, u32)>>(1);
         let join_handle = thread::spawn(move || unsafe {
             let thread_id = GetCurrentThreadId();
-            let hwnd = CreateWindowExW(
+            let hwnd = match CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
                 w!("soundcloud-tui-media-controls"),
@@ -188,21 +187,24 @@ impl HiddenWindow {
                 0,
                 0,
                 0,
-                HWND_MESSAGE,
+                Some(HWND_MESSAGE),
                 None,
                 None,
                 None,
-            );
+            ) {
+                Ok(hwnd) => hwnd,
+                Err(error) => {
+                    let _ = sender.send(
+                        Err(error).context("could not create hidden Windows media controls window"),
+                    );
+                    return;
+                }
+            };
 
-            if hwnd.0 == 0 {
-                let _ = sender.send(Err("could not create hidden Windows media controls window"));
-                return;
-            }
-
-            let _ = sender.send(Ok((hwnd.0 as *mut std::ffi::c_void, thread_id)));
+            let _ = sender.send(Ok((hwnd.0 as *mut c_void, thread_id)));
 
             let mut message = MSG::default();
-            while GetMessageW(&mut message, HWND::default(), 0, 0).into() {
+            while GetMessageW(&mut message, None, 0, 0).into() {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -210,8 +212,7 @@ impl HiddenWindow {
 
         let (hwnd, thread_id) = receiver
             .recv()
-            .context("could not receive hidden Windows media controls window handle")?
-            .map_err(|error| anyhow!(error))?;
+            .context("could not receive hidden Windows media controls window handle")??;
 
         Ok(Self {
             hwnd,
