@@ -50,6 +50,8 @@ If `mpv` is not already installed:
 
 AUR, Homebrew, and WinGet packages are planned for the initial release. Until then, building from source is the supported installation path.
 
+Packaging notes for the initial release live in [`docs/packaging.md`](docs/packaging.md).
+
 ## Inspiration
 
 This project is heavily inspired by [spotatui](https://github.com/lfabianh/spotatui), a maintained fork of the original [spotify-tui](https://github.com/Rigellute/spotify-tui).

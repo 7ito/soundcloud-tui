@@ -1,4 +1,4 @@
-use std::{io, io::IsTerminal, time::Duration};
+use std::{env, io, io::IsTerminal, process, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
@@ -24,13 +24,77 @@ use soundcloud_tui::{
 };
 use tokio::{sync::mpsc, task::LocalSet};
 
+const APP_NAME: &str = env!("CARGO_PKG_NAME");
+const APP_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliAction {
+    Run,
+    PrintHelp,
+    PrintVersion,
+}
+
 #[tokio::main]
 async fn main() {
+    match parse_args(env::args().skip(1)) {
+        Ok(CliAction::Run) => {}
+        Ok(CliAction::PrintHelp) => {
+            let _ = print_help(&mut io::stdout());
+            return;
+        }
+        Ok(CliAction::PrintVersion) => {
+            println!("{APP_NAME} {APP_VERSION}");
+            return;
+        }
+        Err(message) => {
+            eprintln!("{message}\n");
+            let _ = print_help(&mut io::stderr());
+            process::exit(2);
+        }
+    }
+
     let local = LocalSet::new();
 
     if let Err(error) = local.run_until(run()).await {
         eprintln!("soundcloud-tui failed: {error:?}");
     }
+}
+
+fn parse_args<I, S>(args: I) -> std::result::Result<CliAction, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect::<Vec<_>>();
+
+    match args.as_slice() {
+        [] => Ok(CliAction::Run),
+        [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(CliAction::PrintHelp),
+        [arg] if matches!(arg.as_str(), "-V" | "--version") => Ok(CliAction::PrintVersion),
+        [arg] => Err(format!("unrecognized argument `{arg}`")),
+        _ => Err(
+            "soundcloud-tui does not accept positional arguments or multiple flags yet".to_string(),
+        ),
+    }
+}
+
+fn print_help(writer: &mut impl io::Write) -> io::Result<()> {
+    writeln!(writer, "{APP_NAME} {APP_VERSION}")?;
+    writeln!(writer, "{APP_DESCRIPTION}")?;
+    writeln!(writer)?;
+    writeln!(writer, "Usage:")?;
+    writeln!(writer, "  {APP_NAME}")?;
+    writeln!(writer, "  {APP_NAME} --help")?;
+    writeln!(writer, "  {APP_NAME} --version")?;
+    writeln!(writer)?;
+    writeln!(writer, "Options:")?;
+    writeln!(writer, "  -h, --help       Show this help message")?;
+    writeln!(writer, "  -V, --version    Print version information")?;
+    Ok(())
 }
 
 async fn run() -> Result<()> {
@@ -192,5 +256,43 @@ impl Drop for TerminalHandle {
             LeaveAlternateScreen
         );
         let _ = self.terminal.show_cursor();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_runs_without_flags() {
+        assert_eq!(parse_args(Vec::<String>::new()), Ok(CliAction::Run));
+    }
+
+    #[test]
+    fn parse_args_accepts_help_flags() {
+        assert_eq!(parse_args(["-h"]), Ok(CliAction::PrintHelp));
+        assert_eq!(parse_args(["--help"]), Ok(CliAction::PrintHelp));
+    }
+
+    #[test]
+    fn parse_args_accepts_version_flags() {
+        assert_eq!(parse_args(["-V"]), Ok(CliAction::PrintVersion));
+        assert_eq!(parse_args(["--version"]), Ok(CliAction::PrintVersion));
+    }
+
+    #[test]
+    fn parse_args_rejects_unknown_flags() {
+        let error = parse_args(["--bogus"]).expect_err("unknown flags should fail");
+        assert!(error.contains("--bogus"));
+    }
+
+    #[test]
+    fn help_output_mentions_version_flag() {
+        let mut buffer = Vec::new();
+        print_help(&mut buffer).expect("help text should render");
+        let text = String::from_utf8(buffer).expect("help output should be utf-8");
+
+        assert!(text.contains("--version"));
+        assert!(text.contains(APP_VERSION));
     }
 }

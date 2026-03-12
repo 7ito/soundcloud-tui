@@ -1,0 +1,94 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: soundcloud-tui
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_extension: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_extension: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive_extension: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_extension: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libpipewire-0.3-dev pkg-config
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          asset_basename="${BINARY_NAME}-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$asset_basename"
+          cp "target/release/${BINARY_NAME}" "$asset_basename/"
+          cp README.md LICENSE "$asset_basename/"
+          tar -czf "${asset_basename}.tar.gz" "$asset_basename"
+
+      - name: Package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $assetBasename = "$env:BINARY_NAME-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $assetBasename | Out-Null
+          Copy-Item "target/release/$env:BINARY_NAME.exe" "$assetBasename/"
+          Copy-Item README.md, LICENSE "$assetBasename/"
+          Compress-Archive -Path $assetBasename -DestinationPath "$assetBasename.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive_extension }}
+
+  publish:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
