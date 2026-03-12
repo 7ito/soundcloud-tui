@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use log::info;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -20,6 +21,7 @@ pub struct IpcClient {
     connection: IpcConnection,
     read_buffer: Vec<u8>,
     request_id: u64,
+    read_trace_budget: usize,
 }
 
 #[derive(Debug)]
@@ -68,6 +70,7 @@ impl IpcClient {
             connection,
             read_buffer: Vec::new(),
             request_id: 1,
+            read_trace_budget: initial_read_trace_budget(),
         })
     }
 
@@ -178,18 +181,41 @@ impl IpcClient {
             }
 
             let mut scratch = [0_u8; 4096];
+            let trace_read = self.take_read_trace();
+            if trace_read {
+                info!(
+                    "reading mpv IPC bytes on Windows: buffered_bytes={}",
+                    self.read_buffer.len()
+                );
+            }
             match self.connection.read(&mut scratch) {
                 Ok(0) => {
+                    if trace_read {
+                        info!("mpv IPC read returned EOF");
+                    }
                     if self.read_buffer.is_empty() {
                         return Ok(Some(IpcMessage::Closed));
                     }
                     bail!("mpv IPC connection closed before a full JSON message was received");
                 }
                 Ok(bytes_read) => {
+                    if trace_read {
+                        info!("mpv IPC read returned {bytes_read} bytes");
+                    }
                     self.read_buffer.extend_from_slice(&scratch[..bytes_read]);
                 }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
-                Err(error) => return Err(error.into()),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if trace_read {
+                        info!("mpv IPC read would block");
+                    }
+                    return Ok(None);
+                }
+                Err(error) => {
+                    if trace_read {
+                        info!("mpv IPC read failed: {error}");
+                    }
+                    return Err(error.into());
+                }
             }
         }
     }
@@ -205,6 +231,15 @@ impl IpcClient {
         let request_id = self.request_id;
         self.request_id = self.request_id.saturating_add(1);
         request_id
+    }
+
+    fn take_read_trace(&mut self) -> bool {
+        if self.read_trace_budget == 0 {
+            return false;
+        }
+
+        self.read_trace_budget = self.read_trace_budget.saturating_sub(1);
+        true
     }
 }
 
@@ -238,6 +273,16 @@ impl IpcConnection {
     fn connect(_socket_path: &Path) -> Result<Self> {
         bail!("mpv IPC is unsupported on this platform")
     }
+}
+
+#[cfg(windows)]
+fn initial_read_trace_budget() -> usize {
+    12
+}
+
+#[cfg(not(windows))]
+fn initial_read_trace_budget() -> usize {
+    0
 }
 
 impl Read for IpcConnection {
