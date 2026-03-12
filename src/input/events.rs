@@ -6,6 +6,7 @@ use std::{
 use crossterm::event::{
     self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
+use log::warn;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -55,10 +56,16 @@ impl EventHandler {
                             }
                         }
                         Ok(_) => {}
-                        Err(_) => break,
+                        Err(error) => {
+                            warn!("input event loop exiting after read error: {error}");
+                            break;
+                        }
                     },
                     Ok(false) => {}
-                    Err(_) => break,
+                    Err(error) => {
+                        warn!("input event loop exiting after poll error: {error}");
+                        break;
+                    }
                 }
 
                 if last_tick.elapsed() >= tick_rate {

@@ -727,13 +727,13 @@ impl AppState {
     }
 
     fn sync_window_title(&mut self) {
-        let title = if self.settings.set_window_title {
-            match self.now_playing.track.as_ref() {
-                Some(track) => format!("{} - {} | soundcloud-tui", track.title, track.artist),
-                None => format!("{} | soundcloud-tui", self.route_title()),
-            }
-        } else {
-            "soundcloud-tui".to_string()
+        if !self.settings.set_window_title {
+            return;
+        }
+
+        let title = match self.now_playing.track.as_ref() {
+            Some(track) => format!("{} - {} | soundcloud-tui", track.title, track.artist),
+            None => format!("{} | soundcloud-tui", self.route_title()),
         };
 
         self.queue_command(AppCommand::SetWindowTitle(title));

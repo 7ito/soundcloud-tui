@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
@@ -6,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use log::{info, warn};
 
 use crate::{
     config::paths::AppPaths,
@@ -39,6 +41,12 @@ impl MpvPlayerBackend {
         cleanup_socket_path(&socket_path);
         let mpv_path = mpv_locator::discover()?;
 
+        info!(
+            "launching mpv backend: executable={}, ipc={}",
+            mpv_path.display(),
+            socket_path.display()
+        );
+
         let child = Command::new(&mpv_path)
             .arg("--idle=yes")
             .arg("--no-video")
@@ -48,15 +56,17 @@ impl MpvPlayerBackend {
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr_log_stdio(paths))
             .spawn()
             .map_err(|error| mpv_locator::launch_failed(mpv_path.clone(), error))?;
 
         let mut ipc = connect_ipc(&socket_path)?;
+        info!("connected to mpv IPC at {}", socket_path.display());
         ipc.observe_property(OBSERVE_PAUSE, "pause")?;
         ipc.observe_property(OBSERVE_PLAYBACK_TIME, "playback-time")?;
         ipc.observe_property(OBSERVE_DURATION, "duration")?;
         ipc.observe_property(OBSERVE_VOLUME, "volume")?;
+        info!("registered mpv property observers");
 
         Ok(Self {
             child,
@@ -73,6 +83,7 @@ impl MpvPlayerBackend {
             }
 
             self.exit_reported = true;
+            warn!("mpv exited unexpectedly with status {status}");
             return Ok(Some(PlayerEvent::BackendError(format!(
                 "mpv exited unexpectedly with status {status}"
             ))));
@@ -91,6 +102,7 @@ impl PlayerBackend for MpvPlayerBackend {
             });
         }
 
+        info!("sending mpv command: {}", command_label(&command));
         self.ipc.send_command(command)
     }
 
@@ -103,17 +115,20 @@ impl PlayerBackend for MpvPlayerBackend {
             match self.ipc.poll_message()? {
                 Some(IpcMessage::Event(event)) => {
                     if let Some(player_event) = event.into_player_event() {
+                        log_player_event(&player_event);
                         return Ok(Some(player_event));
                     }
                 }
                 Some(IpcMessage::Response(response)) => {
                     if let Some(error) = response.error.filter(|error| error != "success") {
+                        warn!("mpv command failed: {error}");
                         return Ok(Some(PlayerEvent::BackendError(format!(
                             "mpv command failed: {error}"
                         ))));
                     }
                 }
                 Some(IpcMessage::Closed) => {
+                    warn!("mpv IPC connection closed unexpectedly");
                     return Ok(Some(PlayerEvent::BackendError(
                         "mpv IPC connection closed unexpectedly".to_string(),
                     )));
@@ -175,5 +190,46 @@ fn connect_ipc(socket_path: &Path) -> Result<IpcClient> {
                     .context("timed out waiting for mpv IPC endpoint to become available");
             }
         }
+    }
+}
+
+fn stderr_log_stdio(paths: &AppPaths) -> Stdio {
+    let stderr_path = paths.state_dir.join("mpv-stderr.log");
+
+    match File::create(&stderr_path) {
+        Ok(file) => {
+            info!("capturing mpv stderr at {}", stderr_path.display());
+            Stdio::from(file)
+        }
+        Err(error) => {
+            warn!(
+                "could not create mpv stderr log at {}: {error}",
+                stderr_path.display()
+            );
+            Stdio::null()
+        }
+    }
+}
+
+fn command_label(command: &PlayerCommand) -> &'static str {
+    match command {
+        PlayerCommand::LoadTrack { .. } => "load_track",
+        PlayerCommand::Play => "play",
+        PlayerCommand::Pause => "pause",
+        PlayerCommand::TogglePause => "toggle_pause",
+        PlayerCommand::Stop => "stop",
+        PlayerCommand::SeekRelative { .. } => "seek_relative",
+        PlayerCommand::SeekAbsolute { .. } => "seek_absolute",
+        PlayerCommand::SetVolume { .. } => "set_volume",
+        PlayerCommand::Shutdown => "shutdown",
+    }
+}
+
+fn log_player_event(event: &PlayerEvent) {
+    match event {
+        PlayerEvent::PositionChanged { .. }
+        | PlayerEvent::DurationChanged { .. }
+        | PlayerEvent::VolumeChanged { .. } => {}
+        _ => info!("received mpv event: {event:?}"),
     }
 }

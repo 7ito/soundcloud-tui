@@ -833,6 +833,22 @@ fn playback_started_populates_recently_played_and_queues_save() {
 }
 
 #[test]
+fn playback_resumed_skips_window_title_command_when_disabled() {
+    let mut settings = Settings::default();
+    settings.set_window_title = false;
+    let mut app = AppState::new_with_persistence(settings, RecentlyPlayedStore::default());
+    let track = dummy_track("soundcloud:tracks:1", "First Track");
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title.clone();
+    app.now_playing.artist = track.artist.clone();
+
+    app.dispatch_event(AppEvent::Player(PlayerEvent::PlaybackResumed));
+
+    assert_eq!(app.status, "Playing First Track.");
+    assert!(app.take_pending_command().is_none());
+}
+
+#[test]
 fn search_result_shortcuts_switch_between_tables() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:1", "Night Drive");

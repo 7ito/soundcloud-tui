@@ -1,10 +1,13 @@
 use std::{
+    env,
+    sync::OnceLock,
     sync::mpsc::{self, RecvTimeoutError},
     thread,
     time::Duration,
 };
 
 use anyhow::Result;
+use log::info;
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::{
@@ -16,6 +19,7 @@ use crate::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const LIMIT_PLAYER_EVENTS_PER_TICK_ENV_VAR: &str = "SOUNDCLOUD_TUI_LIMIT_PLAYER_EVENTS_PER_TICK";
 
 #[derive(Clone)]
 pub struct PlayerHandle {
@@ -61,6 +65,11 @@ impl PlayerHandle {
                                     drop_backend = true;
                                     break;
                                 }
+
+                                if should_limit_player_events_per_tick() {
+                                    log_player_event_limit_once();
+                                    break;
+                                }
                             }
                             Ok(None) => break,
                             Err(error) => {
@@ -98,4 +107,30 @@ fn ensure_backend<'a>(
     }
 
     Ok(backend.as_mut().expect("backend initialized"))
+}
+
+fn should_limit_player_events_per_tick() -> bool {
+    static LIMIT: OnceLock<bool> = OnceLock::new();
+
+    *LIMIT.get_or_init(|| {
+        env::var(LIMIT_PLAYER_EVENTS_PER_TICK_ENV_VAR)
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn log_player_event_limit_once() {
+    static LOGGED: OnceLock<()> = OnceLock::new();
+
+    let _ = LOGGED.get_or_init(|| {
+        info!(
+            "player event polling limited to one event per tick via {}",
+            LIMIT_PLAYER_EVENTS_PER_TICK_ENV_VAR
+        );
+    });
 }
