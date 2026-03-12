@@ -180,13 +180,19 @@ async fn run() -> Result<()> {
 
         let sync_media_controls = tokio::select! {
             maybe_event = events.next() => {
-                let Some(event) = maybe_event else { break; };
+                let Some(event) = maybe_event else {
+                    warn!("event loop exiting because terminal input stream closed");
+                    break;
+                };
                 let sync_media_controls = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
                 sync_media_controls
             }
             maybe_async = async_rx.recv() => {
-                let Some(event) = maybe_async else { break; };
+                let Some(event) = maybe_async else {
+                    warn!("event loop exiting because async event stream closed");
+                    break;
+                };
                 let sync_media_controls = !matches!(event, AppEvent::VisualizerFrame(_));
                 app.dispatch_event(event);
                 sync_media_controls

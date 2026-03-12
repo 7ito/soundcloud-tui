@@ -9,7 +9,10 @@ use tokio::sync::mpsc;
 
 use crate::app::{AppEvent, AppState, PlaybackIntent};
 
-use super::projection::{MediaControlsState, MediaPlaybackState};
+use super::{
+    DISABLE_MEDIA_ARTWORK_ENV_VAR, media_artwork_disabled,
+    projection::{MediaControlsState, MediaPlaybackState},
+};
 
 const DISPLAY_NAME: &str = "soundcloud-tui";
 const DBUS_NAME: &str = "io.github.tito.soundcloud_tui";
@@ -46,6 +49,13 @@ impl NativeMediaControls {
         #[cfg(target_os = "windows")]
         info!("registered soundcloud-tui with Windows media controls");
 
+        if media_artwork_disabled() {
+            info!(
+                "native media artwork sync disabled via {}",
+                DISABLE_MEDIA_ARTWORK_ENV_VAR
+            );
+        }
+
         #[cfg(target_os = "macos")]
         info!("registered soundcloud-tui with macOS media controls");
 
@@ -66,9 +76,16 @@ impl NativeMediaControls {
             .map(|previous| !previous.metadata_matches(&state))
             .unwrap_or(true)
         {
+            let metadata = metadata_for_state(&state);
+            info!(
+                "syncing native media metadata: track={:?}, artwork_url_present={}",
+                state.track.as_ref().map(|track| track.title.as_str()),
+                metadata.cover_url.is_some()
+            );
             self.controls
-                .set_metadata(metadata_for_state(&state))
+                .set_metadata(metadata)
                 .context("could not update native media metadata")?;
+            info!("native media metadata synced successfully");
         }
 
         if self
@@ -77,9 +94,27 @@ impl NativeMediaControls {
             .map(|previous| !previous.playback_matches(&state))
             .unwrap_or(true)
         {
+            let playback = playback_for_state(&state);
+            let should_log = self
+                .last_state
+                .as_ref()
+                .map(|previous| {
+                    previous.playback != state.playback
+                        || previous.position.is_none() != state.position.is_none()
+                })
+                .unwrap_or(true);
+            if should_log {
+                info!(
+                    "syncing native playback state: playback={:?}, position={:?}",
+                    state.playback, state.position
+                );
+            }
             self.controls
-                .set_playback(playback_for_state(&state))
+                .set_playback(playback)
                 .context("could not update native playback state")?;
+            if should_log {
+                info!("native playback state synced successfully");
+            }
         }
 
         self.last_state = Some(state);
@@ -119,7 +154,9 @@ fn metadata_for_state(state: &MediaControlsState) -> MediaMetadata<'_> {
         title: Some(track.title.as_str()),
         album: None,
         artist: Some(track.artist.as_str()),
-        cover_url: track.artwork_url.as_deref(),
+        cover_url: (!media_artwork_disabled())
+            .then_some(track.artwork_url.as_deref())
+            .flatten(),
         duration: track.duration,
     }
 }
