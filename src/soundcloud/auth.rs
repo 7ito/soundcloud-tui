@@ -672,4 +672,38 @@ mod tests {
             );
         });
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bootstrap_loads_linux_legacy_keyring_entries() {
+        let credentials = Credentials {
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            redirect_uri: DEFAULT_REDIRECT_URI.to_string(),
+        };
+        let tokens = TokenStore {
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            token_type: "Bearer".to_string(),
+            scope: Some("legacy".to_string()),
+            expires_at_epoch: chrono::Utc::now().timestamp() + 3600,
+        };
+        let backend = MemoryBackend::default()
+            .with_legacy_entry(
+                CREDENTIALS_ENTRY,
+                &serde_json::to_string(&credentials).expect("serialize credentials"),
+            )
+            .with_legacy_entry(
+                TOKENS_ENTRY,
+                &serde_json::to_string(&tokens).expect("serialize tokens"),
+            );
+
+        with_test_backend(Arc::new(backend), || {
+            let bootstrap = bootstrap();
+
+            assert_eq!(bootstrap.credentials, credentials);
+            assert_eq!(bootstrap.tokens, Some(tokens));
+            assert!(bootstrap.warning.is_none());
+        });
+    }
 }

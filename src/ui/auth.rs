@@ -126,7 +126,7 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
 
     let reminder = Paragraph::new(vec![
         Line::from("Credentials are stored securely in your OS keyring."),
-        Line::from("Linux users: we recommend gnome-keyring as the Secret Service provider."),
+        Line::from("Linux users: we recommend gnome-keyring; soundcloud-tui creates its own Secret Service collection when needed."),
         Line::from("Click a field to place the cursor, or use Tab/Up/Down to move focus and Enter on buttons."),
         Line::from("Paste works with terminal paste shortcuts and with Ctrl+V when clipboard access is available."),
     ])
