@@ -1,6 +1,6 @@
 [package]
 name = "soundcloud-tui"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 description = "A SoundCloud client for the terminal written in Rust, powered by Ratatui, heavily inspired by spotatui (spotify-tui)."
 license = "MIT"

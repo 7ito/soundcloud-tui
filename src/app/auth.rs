@@ -199,7 +199,7 @@ impl AuthState {
                 None
             }
             KeyCode::Char(ch)
-                if key.modifiers == KeyModifiers::NONE && self.active_input_mut().is_some() =>
+                if text_input_allows_char(key.modifiers) && self.active_input_mut().is_some() =>
             {
                 if let Some(input) = self.active_input_mut() {
                     input.insert(ch);
@@ -434,6 +434,10 @@ fn read_clipboard_text() -> Result<String, String> {
     Err("clipboard text was unavailable from both the terminal and system clipboard".to_string())
 }
 
+fn text_input_allows_char(modifiers: KeyModifiers) -> bool {
+    modifiers.intersection(KeyModifiers::CONTROL | KeyModifiers::ALT) == KeyModifiers::NONE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,5 +471,30 @@ mod tests {
 
         assert_eq!(input.value, "abXYZcd");
         assert_eq!(input.cursor, 5);
+    }
+
+    #[test]
+    fn auth_state_accepts_shifted_printable_chars() {
+        let mut auth = AuthState::new(Credentials::default());
+
+        auth.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        auth.handle_key(KeyEvent::new(KeyCode::Char('{'), KeyModifiers::SHIFT));
+
+        assert_eq!(auth.form.client_id.value, "A{");
+        assert_eq!(auth.form.client_id.cursor, 2);
+    }
+
+    #[test]
+    fn auth_state_ignores_ctrl_modified_printable_chars() {
+        let mut auth = AuthState::new(Credentials::default());
+
+        auth.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        auth.handle_key(KeyEvent::new(
+            KeyCode::Char('A'),
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        ));
+
+        assert_eq!(auth.form.client_id.value, "");
+        assert_eq!(auth.form.client_id.cursor, 0);
     }
 }

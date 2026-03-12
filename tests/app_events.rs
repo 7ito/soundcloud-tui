@@ -359,6 +359,33 @@ fn auth_restore_failure_with_keyring_error_shows_linux_guidance() {
 }
 
 #[test]
+fn auth_input_accepts_shifted_printable_chars() {
+    let mut app = AppState::new_onboarding(Credentials::default());
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('A'),
+        KeyModifiers::SHIFT,
+    )));
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('{'),
+        KeyModifiers::SHIFT,
+    )));
+
+    assert_eq!(app.auth.form.client_id.value, "A{");
+    assert_eq!(app.auth.form.client_id.cursor, 2);
+}
+
+#[test]
+fn auth_paste_event_inserts_sanitized_text_into_active_field() {
+    let mut app = AppState::new_onboarding(Credentials::default());
+
+    app.dispatch_event(AppEvent::Paste("abc\r\nDEF{}".to_string()));
+
+    assert_eq!(app.auth.form.client_id.value, "abcDEF{}");
+    assert_eq!(app.auth.form.client_id.cursor, 8);
+}
+
+#[test]
 fn mouse_click_auth_input_focuses_field() {
     let mut app = AppState::new_onboarding(Credentials::default());
     app.dispatch_event(AppEvent::Resize {
