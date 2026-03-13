@@ -4,6 +4,8 @@ A SoundCloud client for the terminal written in Rust, powered by Ratatui, heavil
 
 This project is still very early. Expect rough edges, missing features, and breaking changes while the core experience is still taking shape.
 
+
+
 ## Current capabilities
 
 - Search for tracks, users, and playlists
