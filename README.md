@@ -20,7 +20,7 @@ This project is still very early. Expect rough edges, missing features, and brea
 - Your own SoundCloud app credentials for OAuth
 - An OS keyring for secure credential and token storage
 
-On Linux, a Secret Service provider such as `gnome-keyring` is recommended.
+On Linux, a Secret Service provider is required, `gnome-keyring` is recommended.
 
 Visualizer notes:
 
@@ -28,9 +28,61 @@ Visualizer notes:
 - macOS needs a loopback device such as BlackHole or Loopback
 - Windows uses WASAPI loopback on the default output device
 
-## Getting started
+## Installation
 
-For now, the easiest way to try `soundcloud-tui` is to run it from source:
+### Arch Linux (AUR)
+
+The AUR package is available as `soundcloud-tui`.
+
+```bash
+yay -S soundcloud-tui
+```
+
+or:
+
+```bash
+paru -S soundcloud-tui
+```
+
+You still need `mpv` installed separately:
+
+```bash
+sudo pacman -S mpv
+```
+
+### Windows
+
+Download the Windows release zip from [GitHub Releases](https://github.com/7ito/soundcloud-tui/releases), then extract it.
+
+`mpv` is required. Download it, move the extracted folder to something like `C:\Program Files\mpv`, then add `C:\Program Files\mpv` to your `User` `PATH` environment variable. 
+
+After updating `PATH`, open a new terminal and confirm `mpv` is available:
+
+```powershell
+mpv --version
+```
+
+Then run `soundcloud-tui` from the extracted release directory:
+
+```powershell
+.\soundcloud-tui.exe
+```
+
+### macOS
+
+An Apple Silicon macOS binary is available on [GitHub Releases](https://github.com/7ito/soundcloud-tui/releases), but it has not been tested yet.
+
+`mpv` is still a hard requirement:
+
+```bash
+brew install mpv
+```
+
+For visualizer support on macOS, you also need a loopback device such as BlackHole or Loopback.
+
+### From source
+
+If you would rather build from source:
 
 ```bash
 git clone https://github.com/7ito/soundcloud-tui.git
@@ -40,17 +92,11 @@ cargo run --release
 
 On first launch, the app walks you through entering your SoundCloud app credentials and authorizing in your browser.
 
-If `mpv` is not already installed:
+## Release status
 
-- Arch Linux: `sudo pacman -S mpv`
-- macOS: `brew install mpv`
-- Windows: install `mpv` and make sure `mpv.exe` is on `PATH`
-
-## Packaging
-
-AUR, Homebrew, and WinGet packages are planned for the initial release. Until then, building from source is the supported installation path.
-
-Packaged macOS releases currently target Apple Silicon only.
+- AUR package available as `soundcloud-tui`
+- Windows binaries available on GitHub Releases
+- Apple Silicon macOS binary available on GitHub Releases, but currently untested
 
 Packaging notes for the initial release live in [`docs/packaging.md`](docs/packaging.md).
 
