@@ -4,7 +4,7 @@ A SoundCloud client for the terminal written in Rust, powered by Ratatui, heavil
 
 This project is still very early. Expect rough edges, missing features, and breaking changes while the core experience is still taking shape.
 
-
+![Demo](https://github.com/7ito/soundcloud-tui/blob/main/docs/soundcloud-tui-demo.gif)
 
 ## Current capabilities
 
