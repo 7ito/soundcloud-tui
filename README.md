@@ -18,9 +18,9 @@ This project is still very early. Expect rough edges, missing features, and brea
 
 - An interactive terminal
 - Rust if you are building from source
-- `mpv` installed and available on `PATH`
+- `mpv` (installed and available on `PATH` for Windows users)
 - Your own SoundCloud app credentials for OAuth
-- An OS keyring for secure credential and token storage
+- An OS keyring for secure credential and token storage for Linux users
 
 On Linux, a Secret Service provider is required, `gnome-keyring` is recommended.
 
