@@ -13,7 +13,7 @@ use soundcloud_tui::{
     player::event::PlayerEvent,
     soundcloud::{
         auth::{self, AuthSession, AuthorizedSession},
-        models::{PlaylistSummary, SearchResults, TrackSummary, UserSummary},
+        models::{FeedItem, FeedOrigin, PlaylistSummary, SearchResults, TrackSummary, UserSummary},
         paging::Page,
     },
     ui::{geometry, widgets::pane_inner},
@@ -852,16 +852,10 @@ fn playback_resumed_skips_window_title_command_when_disabled() {
 fn search_result_shortcuts_switch_between_tables() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:1", "Night Drive");
-    app.session = Some(dummy_session());
-    app.search_query = "night".to_string();
-    app.search_cursor = 5;
-    app.set_route(Route::Search);
-    while app.take_pending_command().is_some() {}
-
-    app.dispatch_event(AppEvent::SearchLoaded {
-        session: dummy_session(),
-        query: "night".to_string(),
-        results: SearchResults {
+    seed_search_results(
+        &mut app,
+        "night",
+        SearchResults {
             tracks: Page {
                 items: vec![dummy_track("soundcloud:tracks:9", "Night Track")],
                 next_href: None,
@@ -875,7 +869,7 @@ fn search_result_shortcuts_switch_between_tables() {
                 next_href: None,
             },
         },
-    });
+    );
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('2'),
@@ -899,16 +893,10 @@ fn search_result_shortcuts_switch_between_tables() {
 #[test]
 fn search_tracks_show_more_available_when_next_page_exists() {
     let mut app = AppState::new();
-    app.session = Some(dummy_session());
-    app.search_query = "night".to_string();
-    app.search_cursor = 5;
-    app.set_route(Route::Search);
-    drain_pending_commands(&mut app);
-
-    app.dispatch_event(AppEvent::SearchLoaded {
-        session: dummy_session(),
-        query: "night".to_string(),
-        results: SearchResults {
+    seed_search_results(
+        &mut app,
+        "night",
+        SearchResults {
             tracks: Page {
                 items: vec![dummy_track("soundcloud:tracks:9", "Night Track")],
                 next_href: Some("https://api.soundcloud.com/next".to_string()),
@@ -922,7 +910,7 @@ fn search_tracks_show_more_available_when_next_page_exists() {
                 next_href: None,
             },
         },
-    });
+    );
 
     assert_eq!(
         app.current_content().state_label,
@@ -934,16 +922,10 @@ fn search_tracks_show_more_available_when_next_page_exists() {
 fn search_playlist_and_user_snapshots_hide_more_available_label() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:1", "Night Drive");
-    app.session = Some(dummy_session());
-    app.search_query = "night".to_string();
-    app.search_cursor = 5;
-    app.set_route(Route::Search);
-    drain_pending_commands(&mut app);
-
-    app.dispatch_event(AppEvent::SearchLoaded {
-        session: dummy_session(),
-        query: "night".to_string(),
-        results: SearchResults {
+    seed_search_results(
+        &mut app,
+        "night",
+        SearchResults {
             tracks: Page {
                 items: Vec::new(),
                 next_href: None,
@@ -957,7 +939,7 @@ fn search_playlist_and_user_snapshots_hide_more_available_label() {
                 next_href: Some("https://api.soundcloud.com/next-users".to_string()),
             },
         },
-    });
+    );
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('2'),
@@ -1600,19 +1582,7 @@ fn copy_shortcut_queues_clipboard_command() {
 fn like_shortcut_queues_track_like_for_selected_track() {
     let mut app = AppState::new();
     let track = dummy_track("soundcloud:tracks:12", "Like Me");
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![track.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
-    app.focus = Focus::Content;
+    seed_liked_tracks(&mut app, vec![track.clone()]);
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('l'),
@@ -1630,27 +1600,8 @@ fn playlist_shortcut_opens_modal_and_enter_queues_add() {
     let mut app = AppState::new();
     let track = dummy_track("soundcloud:tracks:13", "Queue Me");
     let playlist = dummy_playlist("soundcloud:playlists:3", "Road Trip");
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::PlaylistsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![playlist.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![track.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
-    app.focus = Focus::Content;
+    seed_sidebar_playlists(&mut app, vec![playlist.clone()]);
+    seed_liked_tracks(&mut app, vec![track.clone()]);
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('w'),
@@ -1686,27 +1637,8 @@ fn playlist_modal_supports_navigation_jumps_and_cancel() {
         dummy_playlist("soundcloud:playlists:11", "Two"),
         dummy_playlist("soundcloud:playlists:12", "Three"),
     ];
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::PlaylistsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: playlists,
-            next_href: None,
-        },
-        append: false,
-    });
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![track],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
-    app.focus = Focus::Content;
+    seed_sidebar_playlists(&mut app, playlists);
+    seed_liked_tracks(&mut app, vec![track]);
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('w'),
@@ -1757,28 +1689,10 @@ fn lowercase_shortcuts_do_not_run_outside_content() {
     let selected_track = dummy_track("soundcloud:tracks:18", "Selected Track");
     let now_playing_track = dummy_track("soundcloud:tracks:19", "Now Playing Track");
     let playlist = dummy_playlist("soundcloud:playlists:18", "Focus Test");
-    app.session = Some(dummy_session());
     app.now_playing.track = Some(now_playing_track.clone());
     app.now_playing.title = now_playing_track.title.clone();
-
-    app.dispatch_event(AppEvent::PlaylistsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![playlist],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![selected_track],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
+    seed_sidebar_playlists(&mut app, vec![playlist]);
+    seed_liked_tracks(&mut app, vec![selected_track]);
 
     for focus in [Focus::Library, Focus::Playlists, Focus::Playbar] {
         app.focus = focus;
@@ -1807,20 +1721,9 @@ fn uppercase_like_shortcut_targets_now_playing_track() {
     let mut app = AppState::new();
     let selected_track = dummy_track("soundcloud:tracks:20", "Selected Track");
     let now_playing_track = dummy_track("soundcloud:tracks:21", "Current Track");
-    app.session = Some(dummy_session());
     app.now_playing.track = Some(now_playing_track.clone());
     app.now_playing.title = now_playing_track.title.clone();
-
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![selected_track],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
+    seed_liked_tracks(&mut app, vec![selected_track]);
     app.focus = Focus::Library;
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
@@ -1842,28 +1745,10 @@ fn uppercase_playlist_shortcut_uses_now_playing_track() {
     let selected_track = dummy_track("soundcloud:tracks:22", "Selected Track");
     let now_playing_track = dummy_track("soundcloud:tracks:23", "Current Track");
     let playlist = dummy_playlist("soundcloud:playlists:22", "Night Drive");
-    app.session = Some(dummy_session());
     app.now_playing.track = Some(now_playing_track.clone());
     app.now_playing.title = now_playing_track.title.clone();
-
-    app.dispatch_event(AppEvent::PlaylistsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![playlist.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![selected_track],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
+    seed_sidebar_playlists(&mut app, vec![playlist.clone()]);
+    seed_liked_tracks(&mut app, vec![selected_track]);
     app.focus = Focus::Playbar;
 
     app.dispatch_event(AppEvent::Key(KeyEvent::new(
@@ -1919,12 +1804,129 @@ fn clipboard_copy_failure_opens_dismissible_error_modal() {
 #[test]
 fn route_load_failures_open_error_modal() {
     let mut app = AppState::new();
+    app.session = Some(dummy_session());
+    app.set_route(Route::Feed);
+    let request_id = take_feed_request_id(&mut app);
 
-    app.dispatch_event(AppEvent::FeedFailed("network timeout".to_string()));
+    app.dispatch_event(AppEvent::FeedFailed {
+        request_id,
+        error: "network timeout".to_string(),
+    });
 
     let error_modal = app.error_modal.as_ref().expect("expected error modal");
     assert_eq!(error_modal.title, "Could not load feed");
     assert_eq!(app.status, "Could not load feed");
+}
+
+#[test]
+fn stale_feed_reload_result_is_ignored() {
+    let mut app = AppState::new();
+    app.session = Some(dummy_session());
+
+    app.set_route(Route::Feed);
+    let stale_request_id = take_feed_request_id(&mut app);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::F(5),
+        KeyModifiers::NONE,
+    )));
+    let fresh_request_id = take_feed_request_id(&mut app);
+
+    app.dispatch_event(AppEvent::FeedLoaded {
+        session: dummy_session(),
+        request_id: stale_request_id,
+        page: Page {
+            items: vec![dummy_feed_track(
+                "soundcloud:tracks:stale",
+                "Stale Feed Track",
+            )],
+            next_href: None,
+        },
+        append: false,
+    });
+
+    assert!(app.current_content().rows.is_empty());
+
+    app.dispatch_event(AppEvent::FeedLoaded {
+        session: dummy_session(),
+        request_id: fresh_request_id,
+        page: Page {
+            items: vec![dummy_feed_track(
+                "soundcloud:tracks:fresh",
+                "Fresh Feed Track",
+            )],
+            next_href: None,
+        },
+        append: false,
+    });
+
+    assert_eq!(app.current_content().rows.len(), 1);
+    assert_eq!(app.current_content().rows[0].columns[0], "Fresh Feed Track");
+}
+
+#[test]
+fn stale_search_reload_result_is_ignored() {
+    let mut app = AppState::new();
+    app.session = Some(dummy_session());
+    app.search_query = "night".to_string();
+    app.search_cursor = app.search_query.len();
+
+    app.set_route(Route::Search);
+    let stale_request_id = take_search_request_id(&mut app);
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::F(5),
+        KeyModifiers::NONE,
+    )));
+    let fresh_request_id = take_search_request_id(&mut app);
+
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        request_id: stale_request_id,
+        query: "night".to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: vec![dummy_track("soundcloud:tracks:stale", "Stale Search Track")],
+                next_href: None,
+            },
+            playlists: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+            users: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+        },
+    });
+
+    assert!(app.current_content().rows.is_empty());
+
+    app.dispatch_event(AppEvent::SearchLoaded {
+        session: dummy_session(),
+        request_id: fresh_request_id,
+        query: "night".to_string(),
+        results: SearchResults {
+            tracks: Page {
+                items: vec![dummy_track("soundcloud:tracks:fresh", "Fresh Search Track")],
+                next_href: None,
+            },
+            playlists: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+            users: Page {
+                items: Vec::new(),
+                next_href: None,
+            },
+        },
+    });
+
+    assert_eq!(app.current_content().rows.len(), 1);
+    assert_eq!(
+        app.current_content().rows[0].columns[0],
+        "Fresh Search Track"
+    );
 }
 
 #[test]
@@ -1951,17 +1953,7 @@ fn clipboard_success_shows_temporary_toast() {
 fn track_liked_event_refreshes_liked_songs_when_active() {
     let mut app = AppState::new();
     let track = dummy_track("soundcloud:tracks:15", "Refetch Me");
-    app.session = Some(dummy_session());
-    app.dispatch_event(AppEvent::LikedSongsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![track],
-            next_href: None,
-        },
-        append: false,
-    });
-    app.set_route(Route::LikedSongs);
-    while app.take_pending_command().is_some() {}
+    seed_liked_tracks(&mut app, vec![track]);
 
     app.dispatch_event(AppEvent::TrackLiked {
         session: dummy_session(),
@@ -1982,16 +1974,7 @@ fn track_liked_event_refreshes_liked_songs_when_active() {
 fn track_added_to_playlist_refreshes_sidebar_and_active_playlist() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:16", "Refresh Playlist");
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::PlaylistsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![playlist.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
+    seed_sidebar_playlists(&mut app, vec![playlist.clone()]);
     app.sync_route_from_playlist();
     while app.take_pending_command().is_some() {}
 
@@ -2028,18 +2011,7 @@ fn track_added_to_playlist_refreshes_sidebar_and_active_playlist() {
 fn selecting_album_opens_playlist_detail_route() {
     let mut app = AppState::new();
     let playlist = dummy_playlist("soundcloud:playlists:2", "Weekend Album");
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::AlbumsLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![playlist.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-
-    app.set_route(Route::Albums);
+    seed_albums(&mut app, vec![playlist.clone()]);
     app.select_current_content();
 
     assert_eq!(app.route, Route::Playlist);
@@ -2057,19 +2029,7 @@ fn selecting_album_opens_playlist_detail_route() {
 fn selecting_user_opens_profile_route_and_queues_track_load() {
     let mut app = AppState::new();
     let user = dummy_user();
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::FollowingLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![user.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-
-    app.set_route(Route::Following);
-    while app.take_pending_command().is_some() {}
+    seed_following(&mut app, vec![user.clone()]);
 
     app.select_current_content();
 
@@ -2087,19 +2047,7 @@ fn selecting_user_opens_profile_route_and_queues_track_load() {
 fn user_profile_shortcuts_switch_to_playlists_and_queue_load() {
     let mut app = AppState::new();
     let user = dummy_user();
-    app.session = Some(dummy_session());
-
-    app.dispatch_event(AppEvent::FollowingLoaded {
-        session: dummy_session(),
-        page: Page {
-            items: vec![user.clone()],
-            next_href: None,
-        },
-        append: false,
-    });
-
-    app.set_route(Route::Following);
-    while app.take_pending_command().is_some() {}
+    seed_following(&mut app, vec![user.clone()]);
     app.select_current_content();
     while app.take_pending_command().is_some() {}
 
@@ -2191,29 +2139,94 @@ fn open_settings_and_select_logout(app: &mut AppState) {
 }
 
 fn seed_liked_tracks(app: &mut AppState, tracks: Vec<TrackSummary>) {
+    app.session = Some(dummy_session());
+    app.set_route(Route::LikedSongs);
+    let request_id = take_liked_songs_request_id(app);
     app.dispatch_event(AppEvent::LikedSongsLoaded {
         session: dummy_session(),
+        request_id,
         page: Page {
             items: tracks,
             next_href: None,
         },
         append: false,
     });
-    app.set_route(Route::LikedSongs);
     drain_pending_commands(app);
     app.focus = Focus::Content;
     app.selected_content = 0;
 }
 
-fn seed_search_tracks(app: &mut AppState, query: &str, tracks: Vec<TrackSummary>) {
+fn seed_sidebar_playlists(app: &mut AppState, playlists: Vec<PlaylistSummary>) {
+    app.session = Some(dummy_session());
+    app.focus = Focus::Playlists;
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::F(5),
+        KeyModifiers::NONE,
+    )));
+    let request_id = take_playlists_request_id(app);
+    app.dispatch_event(AppEvent::PlaylistsLoaded {
+        session: dummy_session(),
+        request_id,
+        page: Page {
+            items: playlists,
+            next_href: None,
+        },
+        append: false,
+    });
+    drain_pending_commands(app);
+}
+
+fn seed_albums(app: &mut AppState, playlists: Vec<PlaylistSummary>) {
+    app.session = Some(dummy_session());
+    app.set_route(Route::Albums);
+    let request_id = take_albums_request_id(app);
+    app.dispatch_event(AppEvent::AlbumsLoaded {
+        session: dummy_session(),
+        request_id,
+        page: Page {
+            items: playlists,
+            next_href: None,
+        },
+        append: false,
+    });
+    drain_pending_commands(app);
+}
+
+fn seed_following(app: &mut AppState, users: Vec<UserSummary>) {
+    app.session = Some(dummy_session());
+    app.set_route(Route::Following);
+    let request_id = take_following_request_id(app);
+    app.dispatch_event(AppEvent::FollowingLoaded {
+        session: dummy_session(),
+        request_id,
+        page: Page {
+            items: users,
+            next_href: None,
+        },
+        append: false,
+    });
+    drain_pending_commands(app);
+}
+
+fn seed_search_results(app: &mut AppState, query: &str, results: SearchResults) {
+    app.session = Some(dummy_session());
     app.search_query = query.to_string();
     app.search_cursor = query.chars().count();
     app.set_route(Route::Search);
-    drain_pending_commands(app);
+    let request_id = take_search_request_id(app);
     app.dispatch_event(AppEvent::SearchLoaded {
         session: dummy_session(),
+        request_id,
         query: query.to_string(),
-        results: SearchResults {
+        results,
+    });
+}
+
+fn seed_search_tracks(app: &mut AppState, query: &str, tracks: Vec<TrackSummary>) {
+    seed_search_results(
+        app,
+        query,
+        SearchResults {
             tracks: Page {
                 items: tracks,
                 next_href: None,
@@ -2227,10 +2240,63 @@ fn seed_search_tracks(app: &mut AppState, query: &str, tracks: Vec<TrackSummary>
                 next_href: None,
             },
         },
-    });
+    );
     drain_pending_commands(app);
     app.focus = Focus::Content;
     app.selected_content = 0;
+}
+
+fn take_feed_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::LoadFeed { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_liked_songs_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::LoadLikedSongs { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_playlists_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::LoadPlaylists { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_albums_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::LoadAlbums { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_following_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::LoadFollowing { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_search_request_id(app: &mut AppState) -> u64 {
+    take_request_id(app, |command| match command {
+        AppCommand::SearchAll { request_id, .. }
+        | AppCommand::SearchTracksPage { request_id, .. } => Some(*request_id),
+        _ => None,
+    })
+}
+
+fn take_request_id(app: &mut AppState, mut extract: impl FnMut(&AppCommand) -> Option<u64>) -> u64 {
+    let mut request_id = None;
+
+    while let Some(command) = app.take_pending_command() {
+        request_id = request_id.or_else(|| extract(&command));
+    }
+
+    request_id.expect("expected a matching pending request command")
 }
 
 fn left_click(column: u16, row: u16) -> MouseEvent {
@@ -2262,6 +2328,14 @@ fn dummy_track(urn: &str, title: &str) -> TrackSummary {
         artwork_url: None,
         access: None,
         streamable: true,
+    }
+}
+
+fn dummy_feed_track(urn: &str, title: &str) -> FeedItem {
+    FeedItem {
+        activity_type: "track_reposted".to_string(),
+        created_at: Some("2025-01-01T00:00:00Z".to_string()),
+        origin: FeedOrigin::Track(dummy_track(urn, title)),
     }
 }
 

@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppState {
     pub fn dispatch_event(&mut self, event: AppEvent) {
         if self.mode == AppMode::Auth && !event_allowed_during_auth(&event) {
@@ -88,9 +90,14 @@ impl AppState {
             }
             AppEvent::FeedLoaded {
                 session,
+                request_id,
                 page,
                 append,
             } => {
+                if !self.feed_request.matches(request_id) {
+                    return;
+                }
+
                 self.session = Some(session);
                 for item in &page.items {
                     if let FeedOrigin::Playlist(playlist) = &item.origin {
@@ -100,28 +107,46 @@ impl AppState {
                 self.feed.apply_page(page, append);
                 self.status = format!("Loaded {} feed items.", self.feed.items.len());
             }
-            AppEvent::FeedFailed(error) => {
+            AppEvent::FeedFailed { request_id, error } => {
+                if !self.feed_request.matches(request_id) {
+                    return;
+                }
+
                 self.feed.fail(error.clone());
                 self.show_main_error("Could not load feed", error);
             }
             AppEvent::LikedSongsLoaded {
                 session,
+                request_id,
                 page,
                 append,
             } => {
+                if !self.liked_tracks_request.matches(request_id) {
+                    return;
+                }
+
                 self.session = Some(session);
                 self.liked_tracks.apply_page(page, append);
                 self.status = format!("Loaded {} liked tracks.", self.liked_tracks.items.len());
             }
-            AppEvent::LikedSongsFailed(error) => {
+            AppEvent::LikedSongsFailed { request_id, error } => {
+                if !self.liked_tracks_request.matches(request_id) {
+                    return;
+                }
+
                 self.liked_tracks.fail(error.clone());
                 self.show_main_error("Could not load liked songs", error);
             }
             AppEvent::AlbumsLoaded {
                 session,
+                request_id,
                 page,
                 append,
             } => {
+                if !self.albums_request.matches(request_id) {
+                    return;
+                }
+
                 self.session = Some(session);
                 for playlist in &page.items {
                     self.remember_playlist(playlist.clone());
@@ -129,52 +154,94 @@ impl AppState {
                 self.albums.apply_page(page, append);
                 self.status = format!("Loaded {} album-like playlists.", self.albums.items.len());
             }
-            AppEvent::AlbumsFailed(error) => {
+            AppEvent::AlbumsFailed { request_id, error } => {
+                if !self.albums_request.matches(request_id) {
+                    return;
+                }
+
                 self.albums.fail(error.clone());
                 self.show_main_error("Could not load albums", error);
             }
             AppEvent::FollowingLoaded {
                 session,
+                request_id,
                 page,
                 append,
             } => {
+                if !self.following_request.matches(request_id) {
+                    return;
+                }
+
                 self.session = Some(session);
                 self.following.apply_page(page, append);
                 self.status = format!("Loaded {} followed creators.", self.following.items.len());
             }
-            AppEvent::FollowingFailed(error) => {
+            AppEvent::FollowingFailed { request_id, error } => {
+                if !self.following_request.matches(request_id) {
+                    return;
+                }
+
                 self.following.fail(error.clone());
                 self.show_main_error("Could not load followed creators", error);
             }
             AppEvent::PlaylistsLoaded {
                 session,
+                request_id,
                 page,
                 append,
             } => {
+                if !self.playlists.matches_request(request_id) {
+                    return;
+                }
+
                 self.session = Some(session);
                 self.apply_playlists_page(page, append);
             }
-            AppEvent::PlaylistsFailed(error) => {
-                self.playlists_loading = false;
-                self.playlists_loaded = true;
-                self.playlists_error = Some(error.clone());
+            AppEvent::PlaylistsFailed { request_id, error } => {
+                if !self.playlists.matches_request(request_id) {
+                    return;
+                }
+
+                self.playlists.fail(error.clone());
                 self.show_main_error("Could not load playlists", error);
             }
             AppEvent::PlaylistTracksLoaded {
                 session,
+                request_id,
                 playlist_urn,
                 page,
                 append,
             } => {
+                if !self
+                    .playlist_track_requests
+                    .get(&playlist_urn)
+                    .copied()
+                    .unwrap_or_default()
+                    .matches(request_id)
+                {
+                    return;
+                }
+
                 self.session = Some(session);
                 let state = self.playlist_tracks.entry(playlist_urn).or_default();
                 state.apply_page(page, append);
                 self.status = format!("Loaded {} playlist tracks.", state.items.len());
             }
             AppEvent::PlaylistTracksFailed {
+                request_id,
                 playlist_urn,
                 error,
             } => {
+                if !self
+                    .playlist_track_requests
+                    .get(&playlist_urn)
+                    .copied()
+                    .unwrap_or_default()
+                    .matches(request_id)
+                {
+                    return;
+                }
+
                 self.playlist_tracks
                     .entry(playlist_urn)
                     .or_default()
@@ -183,11 +250,14 @@ impl AppState {
             }
             AppEvent::UserTracksLoaded {
                 session,
+                request_id,
                 user_urn,
                 page,
                 append,
             } => {
-                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                if self.active_user_profile_urn() != Some(user_urn.as_str())
+                    || !self.user_profile_tracks_request.matches(request_id)
+                {
                     return;
                 }
 
@@ -199,8 +269,14 @@ impl AppState {
                     self.route_title()
                 );
             }
-            AppEvent::UserTracksFailed { user_urn, error } => {
-                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+            AppEvent::UserTracksFailed {
+                request_id,
+                user_urn,
+                error,
+            } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str())
+                    || !self.user_profile_tracks_request.matches(request_id)
+                {
                     return;
                 }
 
@@ -209,11 +285,14 @@ impl AppState {
             }
             AppEvent::UserPlaylistsLoaded {
                 session,
+                request_id,
                 user_urn,
                 page,
                 append,
             } => {
-                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+                if self.active_user_profile_urn() != Some(user_urn.as_str())
+                    || !self.user_profile_playlists_request.matches(request_id)
+                {
                     return;
                 }
 
@@ -228,8 +307,14 @@ impl AppState {
                     self.route_title()
                 );
             }
-            AppEvent::UserPlaylistsFailed { user_urn, error } => {
-                if self.active_user_profile_urn() != Some(user_urn.as_str()) {
+            AppEvent::UserPlaylistsFailed {
+                request_id,
+                user_urn,
+                error,
+            } => {
+                if self.active_user_profile_urn() != Some(user_urn.as_str())
+                    || !self.user_profile_playlists_request.matches(request_id)
+                {
                     return;
                 }
 
@@ -238,10 +323,11 @@ impl AppState {
             }
             AppEvent::SearchLoaded {
                 session,
+                request_id,
                 query,
                 results,
             } => {
-                if query != self.search_query {
+                if query != self.search_query || !self.search_request.matches(request_id) {
                     return;
                 }
 
@@ -255,8 +341,12 @@ impl AppState {
                     self.search_users.items.len(),
                 );
             }
-            AppEvent::SearchFailed { query, error } => {
-                if query != self.search_query {
+            AppEvent::SearchFailed {
+                request_id,
+                query,
+                error,
+            } => {
+                if query != self.search_query || !self.search_request.matches(request_id) {
                     return;
                 }
 
@@ -267,10 +357,11 @@ impl AppState {
             }
             AppEvent::SearchTracksPageLoaded {
                 session,
+                request_id,
                 query,
                 page,
             } => {
-                if query != self.search_query {
+                if query != self.search_query || !self.search_request.matches(request_id) {
                     return;
                 }
 
@@ -282,8 +373,12 @@ impl AppState {
                     self.search_tracks.items.len()
                 );
             }
-            AppEvent::SearchTracksPageFailed { query, error } => {
-                if query != self.search_query {
+            AppEvent::SearchTracksPageFailed {
+                request_id,
+                query,
+                error,
+            } => {
+                if query != self.search_query || !self.search_request.matches(request_id) {
                     return;
                 }
 

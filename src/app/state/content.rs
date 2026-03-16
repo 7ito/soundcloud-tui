@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppState {
     pub fn current_content(&self) -> ContentView {
         if self.session.is_none() {
@@ -446,29 +448,11 @@ impl AppState {
     }
 
     pub fn playlist_panel_title(&self) -> String {
-        if self.playlists_loading {
-            "Playlists (loading...)".to_string()
-        } else if self.playlists_error.is_some() {
-            "Playlists (error)".to_string()
-        } else if self.playlists_loaded && self.playlists.is_empty() {
-            "Playlists (empty)".to_string()
-        } else if self.playlists_next_href.is_some() {
-            format!("Playlists ({}, more available)", self.playlists.len())
-        } else {
-            format!("Playlists ({})", self.playlists.len())
-        }
+        self.playlists.title()
     }
 
     pub fn playlist_panel_placeholder(&self) -> Option<String> {
-        if self.playlists_loading && self.playlists.is_empty() {
-            Some("Loading playlists...".to_string())
-        } else if self.playlists_error.is_some() {
-            Some("Could not load playlists. Press F5 to retry.".to_string())
-        } else if self.playlists_loaded && self.playlists.is_empty() {
-            Some("No playlists are available for this account yet.".to_string())
-        } else {
-            None
-        }
+        self.playlists.placeholder()
     }
 
     pub fn is_sidebar_playlist_active(&self, index: usize) -> bool {
@@ -535,13 +519,13 @@ impl AppState {
         self.player.position_seconds > 5.0 || self.previous_playback_index().is_some()
     }
 
-    fn current_playback_plan_item(&self) -> Option<&PlaybackPlanItem> {
+    pub(super) fn current_playback_plan_item(&self) -> Option<&PlaybackPlanItem> {
         self.playback_plan
             .current_index
             .and_then(|index| self.playback_plan.items.get(index))
     }
 
-    fn visible_queue_indices(&self) -> Vec<usize> {
+    pub(super) fn visible_queue_indices(&self) -> Vec<usize> {
         let start = match self.playback_plan.current_index {
             Some(index)
                 if matches!(
@@ -564,7 +548,7 @@ impl AppState {
             .collect()
     }
 
-    fn pending_queue_items(&self) -> Vec<PlaybackPlanItem> {
+    pub(super) fn pending_queue_items(&self) -> Vec<PlaybackPlanItem> {
         let start = self
             .playback_plan
             .current_index
@@ -580,7 +564,7 @@ impl AppState {
             .collect()
     }
 
-    fn queue_state_label_for_index(&self, index: usize) -> String {
+    pub(super) fn queue_state_label_for_index(&self, index: usize) -> String {
         if self.playback_plan.current_index == Some(index) {
             "Playing".to_string()
         } else if self
@@ -595,7 +579,7 @@ impl AppState {
         }
     }
 
-    fn build_plan_item(
+    pub(super) fn build_plan_item(
         &self,
         track: TrackSummary,
         context: String,
@@ -608,7 +592,7 @@ impl AppState {
         }
     }
 
-    fn rebuild_playback_plan_for_source(
+    pub(super) fn rebuild_playback_plan_for_source(
         &mut self,
         tracks: Vec<TrackSummary>,
         current_index: usize,
@@ -629,7 +613,7 @@ impl AppState {
         self.queue.selected = 0;
     }
 
-    fn append_track_to_queue(&mut self, track: TrackSummary) {
+    pub(super) fn append_track_to_queue(&mut self, track: TrackSummary) {
         let item = self.build_plan_item(
             track.clone(),
             "Queue".to_string(),
@@ -747,17 +731,17 @@ impl AppState {
             }
         }
     }
-    fn remember_playlist(&mut self, playlist: SoundcloudPlaylist) {
+    pub(super) fn remember_playlist(&mut self, playlist: SoundcloudPlaylist) {
         self.known_playlists.insert(playlist.urn.clone(), playlist);
     }
 
-    fn active_playlist(&self) -> Option<&SoundcloudPlaylist> {
+    pub(super) fn active_playlist(&self) -> Option<&SoundcloudPlaylist> {
         self.active_playlist_urn
             .as_ref()
             .and_then(|urn| self.known_playlists.get(urn))
     }
 
-    fn open_playlist(&mut self, playlist: SoundcloudPlaylist) {
+    pub(super) fn open_playlist(&mut self, playlist: SoundcloudPlaylist) {
         let urn = playlist.urn.clone();
         self.remember_playlist(playlist.clone());
         self.active_playlist_urn = Some(urn.clone());
@@ -774,7 +758,7 @@ impl AppState {
         self.status = format!("Opened playlist {}.", playlist.title);
     }
 
-    fn open_user_profile(&mut self, user: UserSummary) {
+    pub(super) fn open_user_profile(&mut self, user: UserSummary) {
         self.active_user_profile = Some(user.clone());
         self.user_profile_tracks = CollectionState::default();
         self.user_profile_playlists = CollectionState::default();
@@ -783,13 +767,13 @@ impl AppState {
         self.status = format!("Opened {}'s profile.", user.username);
     }
 
-    fn active_user_profile_urn(&self) -> Option<&str> {
+    pub(super) fn active_user_profile_urn(&self) -> Option<&str> {
         self.active_user_profile
             .as_ref()
             .map(|user| user.urn.as_str())
     }
 
-    fn recent_history_state_label(&self) -> String {
+    pub(super) fn recent_history_state_label(&self) -> String {
         if self.recent_history.entries.is_empty() {
             "Empty".to_string()
         } else {
@@ -797,7 +781,7 @@ impl AppState {
         }
     }
 
-    fn search_subtitle(&self) -> String {
+    pub(super) fn search_subtitle(&self) -> String {
         format!(
             "Showing {} for '{}'. Tracks: {} | Playlists: {} | Users: {}",
             self.search_view.label(),
@@ -808,7 +792,7 @@ impl AppState {
         )
     }
 
-    fn search_title(&self) -> String {
+    pub(super) fn search_title(&self) -> String {
         if self.search_query.is_empty() {
             "Search".to_string()
         } else {
@@ -816,7 +800,7 @@ impl AppState {
         }
     }
 
-    fn search_help_message(&self) -> String {
+    pub(super) fn search_help_message(&self) -> String {
         let pagination = if self.search_view == SearchView::Tracks {
             "Use Ctrl+d and Ctrl+u to jump across result pages."
         } else {
@@ -829,13 +813,13 @@ impl AppState {
         )
     }
 
-    fn set_search_view(&mut self, search_view: SearchView) {
+    pub(super) fn set_search_view(&mut self, search_view: SearchView) {
         self.search_view = search_view;
         self.selected_content = 0;
         self.status = format!("Showing {} search results.", search_view.label());
     }
 
-    fn set_user_profile_view(&mut self, user_profile_view: UserProfileView) {
+    pub(super) fn set_user_profile_view(&mut self, user_profile_view: UserProfileView) {
         if self.user_profile_view == user_profile_view {
             return;
         }
@@ -850,7 +834,7 @@ impl AppState {
         self.request_route_load(false);
     }
 
-    fn user_profile_subtitle(&self, user: &UserSummary) -> String {
+    pub(super) fn user_profile_subtitle(&self, user: &UserSummary) -> String {
         let mut segments = vec![
             format!("Followers {}", user.followers_label()),
             format!("{} tracks", user.track_count),
@@ -865,7 +849,7 @@ impl AppState {
         segments.join(" | ")
     }
 
-    fn cache_search_results(&mut self) {
+    pub(super) fn cache_search_results(&mut self) {
         if self.search_query.trim().is_empty() {
             return;
         }
@@ -873,7 +857,7 @@ impl AppState {
         self.search_cache
             .insert(self.search_query.clone(), SearchCache::from_state(self));
     }
-    fn current_selected_content(&self) -> Option<SelectedContent> {
+    pub(super) fn current_selected_content(&self) -> Option<SelectedContent> {
         let index = self.selected_content;
 
         if self.session.is_none() {
@@ -975,7 +959,7 @@ impl AppState {
             },
         }
     }
-    fn mock_content(&self) -> ContentView {
+    pub(super) fn mock_content(&self) -> ContentView {
         match self.route {
             Route::Feed => ContentView {
                 title: "Feed".to_string(),

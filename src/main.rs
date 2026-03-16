@@ -147,7 +147,7 @@ async fn run() -> Result<()> {
         async_tx.clone(),
         player.clone(),
         visualizer.clone(),
-    );
+    )?;
 
     let mut media_controls = match MediaControlsIntegration::new(async_tx.clone()).await {
         Ok(Some(mut integration)) => {

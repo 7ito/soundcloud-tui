@@ -1,5 +1,8 @@
+use super::*;
+use crate::util::time::format_seconds_f64;
+
 impl AppState {
-    fn start_track_playback(&mut self, track: TrackSummary, context: String) {
+    pub(super) fn start_track_playback(&mut self, track: TrackSummary, context: String) {
         if !track.can_attempt_playback() {
             self.status = format!(
                 "{} is blocked on SoundCloud and cannot be streamed.",
@@ -30,7 +33,7 @@ impl AppState {
         self.queue_command(AppCommand::PlayTrack { session, track });
     }
 
-    fn refresh_cover_art(&mut self, artwork_url: Option<&str>) {
+    pub(super) fn refresh_cover_art(&mut self, artwork_url: Option<&str>) {
         let Some(artwork_url) = artwork_url.map(str::trim).filter(|value| !value.is_empty()) else {
             self.cover_art = CoverArt::default();
             return;
@@ -48,7 +51,7 @@ impl AppState {
         });
     }
 
-    fn current_track_queue_selection(&self) -> Option<(Vec<TrackSummary>, usize)> {
+    pub(super) fn current_track_queue_selection(&self) -> Option<(Vec<TrackSummary>, usize)> {
         match self.route {
             Route::Feed => {
                 let mut queue = Vec::new();
@@ -127,7 +130,7 @@ impl AppState {
         }
     }
 
-    fn play_playback(&mut self) {
+    pub(super) fn play_playback(&mut self) {
         let Some(track) = self.now_playing.track.clone() else {
             self.status = "Select a track first.".to_string();
             return;
@@ -150,7 +153,7 @@ impl AppState {
         }
     }
 
-    fn pause_playback(&mut self) {
+    pub(super) fn pause_playback(&mut self) {
         let Some(title) = self
             .now_playing
             .track
@@ -175,7 +178,7 @@ impl AppState {
         self.status = format!("Pausing {title}...");
     }
 
-    fn stop_playback(&mut self) {
+    pub(super) fn stop_playback(&mut self) {
         if self.now_playing.track.is_none() {
             self.status = "Nothing is playing.".to_string();
             return;
@@ -185,7 +188,7 @@ impl AppState {
         self.status = "Stopping playback...".to_string();
     }
 
-    fn seek_relative(&mut self, seconds: f64) {
+    pub(super) fn seek_relative(&mut self, seconds: f64) {
         if self.now_playing.track.is_none() {
             self.status = "Nothing is playing.".to_string();
             return;
@@ -201,7 +204,7 @@ impl AppState {
         };
     }
 
-    fn seek_absolute(&mut self, seconds: f64) {
+    pub(super) fn seek_absolute(&mut self, seconds: f64) {
         if self.now_playing.track.is_none() {
             self.status = "Nothing is playing.".to_string();
             return;
@@ -214,7 +217,7 @@ impl AppState {
         self.status = format!("Seeking to {}...", format_seconds_f64(seconds));
     }
 
-    fn set_volume(&mut self, percent: f64) {
+    pub(super) fn set_volume(&mut self, percent: f64) {
         let target = percent.clamp(0.0, 100.0);
         self.queue_command(AppCommand::ControlPlayback(PlayerCommand::SetVolume {
             percent: target,
@@ -222,7 +225,7 @@ impl AppState {
         self.status = format!("Setting volume to {:.0}%...", target.round());
     }
 
-    fn set_shuffle(&mut self, enabled: bool) {
+    pub(super) fn set_shuffle(&mut self, enabled: bool) {
         self.player.shuffle_enabled = enabled;
         self.status = if enabled {
             "Shuffle enabled.".to_string()
@@ -231,12 +234,12 @@ impl AppState {
         };
     }
 
-    fn set_repeat_mode(&mut self, repeat_mode: RepeatMode) {
+    pub(super) fn set_repeat_mode(&mut self, repeat_mode: RepeatMode) {
         self.player.repeat_mode = repeat_mode;
         self.status = format!("Repeat mode set to {}.", repeat_mode.label());
     }
 
-    fn play_next_track(&mut self) {
+    pub(super) fn play_next_track(&mut self) {
         let Some(next_index) = self.next_playback_index() else {
             self.status = "Reached the end of the queue.".to_string();
             return;
@@ -251,7 +254,7 @@ impl AppState {
         self.start_track_playback(item.track, item.context);
     }
 
-    fn next_playback_index(&self) -> Option<usize> {
+    pub(super) fn next_playback_index(&self) -> Option<usize> {
         let current_index = self.playback_plan.current_index?;
         let track_count = self.playback_plan.items.len();
 
@@ -264,7 +267,7 @@ impl AppState {
         }
     }
 
-    fn previous_playback_index(&self) -> Option<usize> {
+    pub(super) fn previous_playback_index(&self) -> Option<usize> {
         let current_index = self.playback_plan.current_index?;
         let track_count = self.playback_plan.items.len();
 
@@ -277,7 +280,7 @@ impl AppState {
         }
     }
 
-    fn restart_current_track(&mut self) -> bool {
+    pub(super) fn restart_current_track(&mut self) -> bool {
         let track = self
             .current_playback_plan_item()
             .cloned()
@@ -298,7 +301,7 @@ impl AppState {
         true
     }
 
-    fn play_previous_track(&mut self) {
+    pub(super) fn play_previous_track(&mut self) {
         if self.playback_plan.current_index.is_none() {
             self.status = "Nothing queued for playback.".to_string();
             return;
@@ -326,7 +329,7 @@ impl AppState {
         self.start_track_playback(item.track, item.context);
     }
 
-    fn force_previous_track(&mut self) {
+    pub(super) fn force_previous_track(&mut self) {
         if self.playback_plan.current_index.is_none() {
             self.status = "Nothing queued for playback.".to_string();
             return;
@@ -343,7 +346,7 @@ impl AppState {
         let _ = self.restart_current_track();
     }
 
-    fn apply_player_event(&mut self, event: PlayerEvent) {
+    pub(super) fn apply_player_event(&mut self, event: PlayerEvent) {
         match event {
             PlayerEvent::PlaybackStarted => {
                 self.record_recent_playback();
@@ -415,7 +418,7 @@ impl AppState {
         }
     }
 
-    fn sync_now_playing_progress(&mut self) {
+    pub(super) fn sync_now_playing_progress(&mut self) {
         self.now_playing.elapsed_label = format_seconds_f64(self.player.position_seconds);
 
         if let Some(duration_seconds) = self.player.duration_seconds {
@@ -427,7 +430,7 @@ impl AppState {
             };
         }
     }
-    fn selected_track_shortcut_target(&self) -> Option<TrackSummary> {
+    pub(super) fn selected_track_shortcut_target(&self) -> Option<TrackSummary> {
         if self.focus != Focus::Content {
             return None;
         }
@@ -438,11 +441,11 @@ impl AppState {
         }
     }
 
-    fn now_playing_shortcut_target(&self) -> Option<TrackSummary> {
+    pub(super) fn now_playing_shortcut_target(&self) -> Option<TrackSummary> {
         self.now_playing.track.clone()
     }
 
-    fn open_queue_overlay(&mut self) {
+    pub(super) fn open_queue_overlay(&mut self) {
         self.queue.overlay_visible = true;
         self.queue.selected = self
             .queue_overlay_selection()
@@ -455,12 +458,12 @@ impl AppState {
         };
     }
 
-    fn close_queue_overlay(&mut self) {
+    pub(super) fn close_queue_overlay(&mut self) {
         self.queue.overlay_visible = false;
         self.status = "Closed queue overlay.".to_string();
     }
 
-    fn move_queue_selection(&mut self, down: bool) {
+    pub(super) fn move_queue_selection(&mut self, down: bool) {
         let len = self.visible_queue_indices().len();
         if len == 0 {
             self.status = "Queue is empty.".to_string();
@@ -485,7 +488,7 @@ impl AppState {
         }
     }
 
-    fn queue_selected_track(&mut self) {
+    pub(super) fn queue_selected_track(&mut self) {
         let Some(track) = self.selected_track_shortcut_target() else {
             self.status = "Select a track first.".to_string();
             return;
@@ -494,7 +497,7 @@ impl AppState {
         self.append_track_to_queue(track);
     }
 
-    fn play_selected_queue_track(&mut self) {
+    pub(super) fn play_selected_queue_track(&mut self) {
         let indices = self.visible_queue_indices();
         let Some(plan_index) = indices
             .get(self.queue.selected.min(indices.len().saturating_sub(1)))
@@ -513,7 +516,7 @@ impl AppState {
         self.start_track_playback(item.track, item.context);
     }
 
-    fn remove_selected_queue_track(&mut self) {
+    pub(super) fn remove_selected_queue_track(&mut self) {
         let indices = self.visible_queue_indices();
         let Some(plan_index) = indices
             .get(self.queue.selected.min(indices.len().saturating_sub(1)))
@@ -540,17 +543,17 @@ impl AppState {
         self.status = format!("Removed {} from the queue.", removed.track.title);
     }
 
-    fn open_add_to_playlist_modal_for_selected_track(&mut self) {
+    pub(super) fn open_add_to_playlist_modal_for_selected_track(&mut self) {
         let track = self.selected_track_shortcut_target();
         self.open_add_to_playlist_modal(track, "Select a track first.");
     }
 
-    fn open_add_to_playlist_modal_for_now_playing(&mut self) {
+    pub(super) fn open_add_to_playlist_modal_for_now_playing(&mut self) {
         let track = self.now_playing_shortcut_target();
         self.open_add_to_playlist_modal(track, "Nothing is playing right now.");
     }
 
-    fn open_add_to_playlist_modal(
+    pub(super) fn open_add_to_playlist_modal(
         &mut self,
         track: Option<TrackSummary>,
         missing_track_message: &str,
@@ -565,13 +568,13 @@ impl AppState {
             return;
         }
 
-        if self.playlists_loading && self.playlists.is_empty() {
+        if self.playlists.is_loading() && self.playlists.is_empty() {
             self.status = "Playlists are still loading. Try again in a moment.".to_string();
             return;
         }
 
         if self.playlists.is_empty() {
-            if !self.playlists_loaded || self.playlists_error.is_some() {
+            if !self.playlists.is_loaded() || self.playlists.has_error() {
                 self.invalidate_playlists_sidebar();
                 self.status = "Loading playlists before opening the playlist picker...".to_string();
             } else {
@@ -589,17 +592,17 @@ impl AppState {
         self.status = format!("Choose a playlist for {}.", track.title);
     }
 
-    fn like_selected_track(&mut self) {
+    pub(super) fn like_selected_track(&mut self) {
         let track = self.selected_track_shortcut_target();
         self.like_track(track, "Select a track first.");
     }
 
-    fn like_now_playing_track(&mut self) {
+    pub(super) fn like_now_playing_track(&mut self) {
         let track = self.now_playing_shortcut_target();
         self.like_track(track, "Nothing is playing right now.");
     }
 
-    fn like_track(&mut self, track: Option<TrackSummary>, missing_track_message: &str) {
+    pub(super) fn like_track(&mut self, track: Option<TrackSummary>, missing_track_message: &str) {
         let Some(track) = track else {
             self.status = missing_track_message.to_string();
             return;
@@ -614,7 +617,7 @@ impl AppState {
         self.queue_command(AppCommand::LikeTrack { session, track });
     }
 
-    fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
+    pub(super) fn handle_playback_key(&mut self, key: KeyEvent) -> bool {
         let seek_seconds = self.settings.seek_duration_ms as f64 / 1000.0;
         let volume_increment = self.settings.volume_increment as f64;
 
@@ -672,7 +675,7 @@ impl AppState {
         false
     }
 
-    fn handle_visualizer_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_visualizer_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
             (KeyCode::Char('V'), KeyModifiers::SHIFT) => self.cycle_visualizer_style(),
             (KeyCode::Char('v'), KeyModifiers::NONE) | (KeyCode::Esc, _) => self.close_visualizer(),
@@ -681,11 +684,11 @@ impl AppState {
         }
     }
 
-    fn queue_command(&mut self, command: AppCommand) {
+    pub(super) fn queue_command(&mut self, command: AppCommand) {
         self.pending_commands.push_back(command);
     }
 
-    fn toggle_visualizer(&mut self) {
+    pub(super) fn toggle_visualizer(&mut self) {
         if self.visualizer.visible {
             self.close_visualizer();
         } else {
@@ -693,7 +696,7 @@ impl AppState {
         }
     }
 
-    fn open_visualizer(&mut self) {
+    pub(super) fn open_visualizer(&mut self) {
         if self.visualizer.visible {
             return;
         }
@@ -710,7 +713,7 @@ impl AppState {
         self.queue_command(AppCommand::ControlVisualizer(VisualizerCommand::Start));
     }
 
-    fn close_visualizer(&mut self) {
+    pub(super) fn close_visualizer(&mut self) {
         if !self.visualizer.visible {
             return;
         }
@@ -721,12 +724,12 @@ impl AppState {
         self.queue_command(AppCommand::ControlVisualizer(VisualizerCommand::Stop));
     }
 
-    fn cycle_visualizer_style(&mut self) {
+    pub(super) fn cycle_visualizer_style(&mut self) {
         self.visualizer.style = self.visualizer.style.next();
         self.status = format!("Visualizer style set to {}.", self.visualizer.style.label());
     }
 
-    fn sync_window_title(&mut self) {
+    pub(super) fn sync_window_title(&mut self) {
         if !self.settings.set_window_title {
             return;
         }
@@ -738,7 +741,7 @@ impl AppState {
 
         self.queue_command(AppCommand::SetWindowTitle(title));
     }
-    fn copy_now_playing_url(&mut self) {
+    pub(super) fn copy_now_playing_url(&mut self) {
         let Some(track) = self.now_playing.track.as_ref() else {
             self.show_main_error(
                 "Could not copy share URL",
@@ -765,7 +768,7 @@ impl AppState {
         self.status = format!("Copying {} URL to the clipboard...", label);
     }
 
-    fn cycle_repeat_mode(&mut self) {
+    pub(super) fn cycle_repeat_mode(&mut self) {
         let next_mode = match self.player.repeat_mode {
             RepeatMode::Off => RepeatMode::Track,
             RepeatMode::Track => RepeatMode::Queue,
@@ -773,7 +776,7 @@ impl AppState {
         };
         self.set_repeat_mode(next_mode);
     }
-    fn record_recent_playback(&mut self) {
+    pub(super) fn record_recent_playback(&mut self) {
         let Some(track) = self.now_playing.track.clone() else {
             return;
         };

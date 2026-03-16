@@ -1,20 +1,23 @@
+use super::*;
+use crate::soundcloud::models::SearchResults;
+
 impl AppState {
     pub fn maybe_queue_more_playlists(&mut self) -> bool {
-        if self.session.is_none() || self.playlists_loading {
+        if self.session.is_none() || self.playlists.is_loading() {
             return false;
         }
 
-        let Some(next_href) = self.playlists_next_href.clone() else {
+        let Some(next_href) = self.playlists.next_href().map(str::to_string) else {
             return false;
         };
         let Some(session) = self.session.clone() else {
             return false;
         };
 
-        self.playlists_loading = true;
-        self.playlists_error = None;
+        let request_id = self.playlists.start_loading(true);
         self.queue_command(AppCommand::LoadPlaylists {
             session,
+            request_id,
             next_href: Some(next_href),
             append: true,
         });
@@ -36,8 +39,10 @@ impl AppState {
                     return false;
                 };
                 self.feed.start_loading(true);
+                let request_id = self.feed_request.issue(true);
                 self.queue_command(AppCommand::LoadFeed {
                     session,
+                    request_id,
                     next_href: Some(next_href),
                     append: true,
                 });
@@ -52,8 +57,10 @@ impl AppState {
                     return false;
                 };
                 self.liked_tracks.start_loading(true);
+                let request_id = self.liked_tracks_request.issue(true);
                 self.queue_command(AppCommand::LoadLikedSongs {
                     session,
+                    request_id,
                     next_href: Some(next_href),
                     append: true,
                 });
@@ -68,8 +75,10 @@ impl AppState {
                     return false;
                 };
                 self.albums.start_loading(true);
+                let request_id = self.albums_request.issue(true);
                 self.queue_command(AppCommand::LoadAlbums {
                     session,
+                    request_id,
                     next_href: Some(next_href),
                     append: true,
                 });
@@ -84,8 +93,10 @@ impl AppState {
                     return false;
                 };
                 self.following.start_loading(true);
+                let request_id = self.following_request.issue(true);
                 self.queue_command(AppCommand::LoadFollowing {
                     session,
+                    request_id,
                     next_href: Some(next_href),
                     append: true,
                 });
@@ -109,8 +120,14 @@ impl AppState {
                     state.start_loading(true);
                     next_href
                 };
+                let request_id = self
+                    .playlist_track_requests
+                    .entry(urn.clone())
+                    .or_default()
+                    .issue(true);
                 self.queue_command(AppCommand::LoadPlaylistTracks {
                     session,
+                    request_id,
                     playlist_urn: urn,
                     next_href: Some(next_href),
                     append: true,
@@ -133,8 +150,10 @@ impl AppState {
                         };
 
                         self.user_profile_tracks.start_loading(true);
+                        let request_id = self.user_profile_tracks_request.issue(true);
                         self.queue_command(AppCommand::LoadUserTracks {
                             session,
+                            request_id,
                             user_urn,
                             next_href: Some(next_href),
                             append: true,
@@ -151,8 +170,10 @@ impl AppState {
                         };
 
                         self.user_profile_playlists.start_loading(true);
+                        let request_id = self.user_profile_playlists_request.issue(true);
                         self.queue_command(AppCommand::LoadUserPlaylists {
                             session,
+                            request_id,
                             user_urn,
                             next_href: Some(next_href),
                             append: true,
@@ -175,8 +196,10 @@ impl AppState {
                 };
 
                 self.search_tracks.start_loading(true);
+                let request_id = self.search_request.issue(true);
                 self.queue_command(AppCommand::SearchTracksPage {
                     session,
+                    request_id,
                     query: self.search_query.clone(),
                     next_href,
                 });
@@ -186,21 +209,21 @@ impl AppState {
             Route::RecentlyPlayed => false,
         }
     }
-    fn request_playlists_load(&mut self, append: bool) {
+    pub(super) fn request_playlists_load(&mut self, append: bool) {
         let Some(session) = self.session.clone() else {
             return;
         };
 
-        if self.playlists_loading || (!append && self.playlists_loaded) {
+        if self.playlists.is_loading() || (!append && self.playlists.is_loaded()) {
             return;
         }
 
-        self.playlists_loading = true;
-        self.playlists_error = None;
+        let request_id = self.playlists.start_loading(append);
         self.queue_command(AppCommand::LoadPlaylists {
             session,
+            request_id,
             next_href: if append {
-                self.playlists_next_href.clone()
+                self.playlists.next_href().map(str::to_string)
             } else {
                 None
             },
@@ -208,7 +231,7 @@ impl AppState {
         });
     }
 
-    fn request_route_load(&mut self, append: bool) {
+    pub(super) fn request_route_load(&mut self, append: bool) {
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -219,8 +242,10 @@ impl AppState {
                     return;
                 }
                 self.feed.start_loading(append);
+                let request_id = self.feed_request.issue(append);
                 self.queue_command(AppCommand::LoadFeed {
                     session,
+                    request_id,
                     next_href: if append {
                         self.feed.next_href.clone()
                     } else {
@@ -234,8 +259,10 @@ impl AppState {
                     return;
                 }
                 self.liked_tracks.start_loading(append);
+                let request_id = self.liked_tracks_request.issue(append);
                 self.queue_command(AppCommand::LoadLikedSongs {
                     session,
+                    request_id,
                     next_href: if append {
                         self.liked_tracks.next_href.clone()
                     } else {
@@ -259,8 +286,10 @@ impl AppState {
                     return;
                 }
                 self.albums.start_loading(append);
+                let request_id = self.albums_request.issue(append);
                 self.queue_command(AppCommand::LoadAlbums {
                     session,
+                    request_id,
                     next_href: if append {
                         self.albums.next_href.clone()
                     } else {
@@ -274,8 +303,10 @@ impl AppState {
                     return;
                 }
                 self.following.start_loading(append);
+                let request_id = self.following_request.issue(append);
                 self.queue_command(AppCommand::LoadFollowing {
                     session,
+                    request_id,
                     next_href: if append {
                         self.following.next_href.clone()
                     } else {
@@ -301,8 +332,14 @@ impl AppState {
                     state.start_loading(append);
                     next_href
                 };
+                let request_id = self
+                    .playlist_track_requests
+                    .entry(urn.clone())
+                    .or_default()
+                    .issue(append);
                 self.queue_command(AppCommand::LoadPlaylistTracks {
                     session,
+                    request_id,
                     playlist_urn: urn,
                     next_href,
                     append,
@@ -322,8 +359,10 @@ impl AppState {
                             return;
                         }
                         self.user_profile_tracks.start_loading(append);
+                        let request_id = self.user_profile_tracks_request.issue(append);
                         self.queue_command(AppCommand::LoadUserTracks {
                             session,
+                            request_id,
                             user_urn,
                             next_href: if append {
                                 self.user_profile_tracks.next_href.clone()
@@ -340,8 +379,10 @@ impl AppState {
                             return;
                         }
                         self.user_profile_playlists.start_loading(append);
+                        let request_id = self.user_profile_playlists_request.issue(append);
                         self.queue_command(AppCommand::LoadUserPlaylists {
                             session,
+                            request_id,
                             user_urn,
                             next_href: if append {
                                 self.user_profile_playlists.next_href.clone()
@@ -375,33 +416,36 @@ impl AppState {
                 self.search_tracks.start_loading(false);
                 self.search_playlists.start_loading(false);
                 self.search_users.start_loading(false);
+                let request_id = self.search_request.issue(false);
                 self.queue_command(AppCommand::SearchAll {
                     session,
+                    request_id,
                     query: self.search_query.clone(),
                 });
             }
         }
     }
 
-    fn invalidate_liked_tracks(&mut self) {
+    pub(super) fn invalidate_liked_tracks(&mut self) {
         self.liked_tracks = CollectionState::default();
+        self.liked_tracks_request.invalidate();
         if self.route == Route::LikedSongs {
             self.request_route_load(false);
         }
     }
 
-    fn invalidate_playlists_sidebar(&mut self) {
-        self.playlists_loading = false;
-        self.playlists_loaded = false;
-        self.playlists_error = None;
-        self.playlists_next_href = None;
-        self.playlists.clear();
+    pub(super) fn invalidate_playlists_sidebar(&mut self) {
+        self.playlists.invalidate();
         self.request_playlists_load(false);
     }
 
-    fn invalidate_playlist_tracks(&mut self, playlist_urn: &str) {
+    pub(super) fn invalidate_playlist_tracks(&mut self, playlist_urn: &str) {
         self.playlist_tracks
             .insert(playlist_urn.to_string(), CollectionState::default());
+        self.playlist_track_requests
+            .entry(playlist_urn.to_string())
+            .or_default()
+            .invalidate();
 
         if self.active_playlist_urn.as_deref() == Some(playlist_urn)
             && self.route == Route::Playlist
@@ -410,32 +454,36 @@ impl AppState {
         }
     }
 
-    fn bump_playlist_track_count(&mut self, playlist_urn: &str) {
+    pub(super) fn bump_playlist_track_count(&mut self, playlist_urn: &str) {
         if let Some(playlist) = self.known_playlists.get_mut(playlist_urn) {
             playlist.track_count = playlist.track_count.saturating_add(1);
         }
     }
 
-    fn reset_live_data(&mut self) {
-        self.playlists.clear();
-        self.playlists_loading = false;
-        self.playlists_loaded = false;
-        self.playlists_error = None;
-        self.playlists_next_href = None;
+    pub(super) fn reset_live_data(&mut self) {
+        self.playlists.reset();
         self.active_playlist_urn = None;
         self.known_playlists.clear();
         self.feed = CollectionState::default();
+        self.feed_request = RequestTracker::default();
         self.liked_tracks = CollectionState::default();
+        self.liked_tracks_request = RequestTracker::default();
         self.albums = CollectionState::default();
+        self.albums_request = RequestTracker::default();
         self.following = CollectionState::default();
+        self.following_request = RequestTracker::default();
         self.playlist_tracks.clear();
+        self.playlist_track_requests.clear();
         self.search_tracks = CollectionState::default();
         self.search_playlists = CollectionState::default();
         self.search_users = CollectionState::default();
+        self.search_request = RequestTracker::default();
         self.search_view = SearchView::Tracks;
         self.active_user_profile = None;
         self.user_profile_tracks = CollectionState::default();
+        self.user_profile_tracks_request = RequestTracker::default();
         self.user_profile_playlists = CollectionState::default();
+        self.user_profile_playlists_request = RequestTracker::default();
         self.user_profile_view = UserProfileView::Tracks;
         self.search_cache.clear();
         self.selected_playlist = 0;
@@ -463,12 +511,7 @@ impl AppState {
         self.cover_art = CoverArt::default();
     }
 
-    fn apply_playlists_page(&mut self, page: Page<SoundcloudPlaylist>, append: bool) {
-        self.playlists_loading = false;
-        self.playlists_loaded = true;
-        self.playlists_error = None;
-        self.playlists_next_href = page.next_href.clone();
-
+    pub(super) fn apply_playlists_page(&mut self, page: Page<SoundcloudPlaylist>, append: bool) {
         let mapped = page
             .items
             .into_iter()
@@ -485,11 +528,13 @@ impl AppState {
             })
             .collect::<Vec<_>>();
 
-        if append {
-            self.playlists.extend(mapped);
-        } else {
-            self.playlists = mapped;
-        }
+        self.playlists.apply_page(
+            Page {
+                items: mapped,
+                next_href: page.next_href,
+            },
+            append,
+        );
 
         if self.playlists.is_empty() {
             self.selected_playlist = 0;
@@ -503,7 +548,7 @@ impl AppState {
         self.status = format!("Loaded {} playlists.", self.playlists.len());
     }
 
-    fn apply_search_results(&mut self, results: SearchResults) {
+    pub(super) fn apply_search_results(&mut self, results: SearchResults) {
         self.search_tracks.apply_page(results.tracks, false);
         for playlist in &results.playlists.items {
             self.remember_playlist(playlist.clone());
@@ -512,13 +557,9 @@ impl AppState {
         self.search_users.apply_page(results.users, false);
     }
 
-    fn reload_current_route(&mut self) {
+    pub(super) fn reload_current_route(&mut self) {
         if self.focus == Focus::Playlists {
-            self.playlists.clear();
-            self.playlists_loading = false;
-            self.playlists_loaded = false;
-            self.playlists_error = None;
-            self.playlists_next_href = None;
+            self.playlists.reset();
             self.status = "Reloading playlists...".to_string();
             self.request_playlists_load(false);
             return;

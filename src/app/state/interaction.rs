@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppState {
     pub fn on_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
@@ -46,7 +48,11 @@ impl AppState {
             .unwrap_or("Ready")
     }
 
-    fn show_error_modal(&mut self, title: impl Into<String>, message: impl Into<String>) {
+    pub(super) fn show_error_modal(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
         self.add_to_playlist_modal = None;
         self.logout_confirm_modal = None;
         self.error_modal = Some(ErrorModal {
@@ -55,25 +61,25 @@ impl AppState {
         });
     }
 
-    fn show_main_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+    pub(super) fn show_main_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
         let title = title.into();
         self.show_error_modal(title.clone(), message);
         self.status = title;
     }
 
-    fn show_toast(&mut self, message: impl Into<String>) {
+    pub(super) fn show_toast(&mut self, message: impl Into<String>) {
         self.toast = Some(Toast {
             message: message.into(),
             expires_at_tick: self.tick_count.saturating_add(12),
         });
     }
 
-    fn dismiss_error_modal(&mut self) {
+    pub(super) fn dismiss_error_modal(&mut self) {
         self.error_modal = None;
         self.status = "Dismissed the latest error.".to_string();
     }
 
-    fn handle_error_modal_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_error_modal_key(&mut self, key: KeyEvent) {
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter)
             || self.settings.key_matches(KeyAction::Back, key)
         {
@@ -81,12 +87,12 @@ impl AppState {
         }
     }
 
-    fn dismiss_add_to_playlist_modal(&mut self) {
+    pub(super) fn dismiss_add_to_playlist_modal(&mut self) {
         self.add_to_playlist_modal = None;
         self.status = "Cancelled add to playlist.".to_string();
     }
 
-    fn open_logout_confirm_modal(&mut self) {
+    pub(super) fn open_logout_confirm_modal(&mut self) {
         self.logout_confirm_modal = Some(LogoutConfirmModal {
             username: self
                 .session
@@ -101,12 +107,12 @@ impl AppState {
             .to_string();
     }
 
-    fn dismiss_logout_confirm_modal(&mut self) {
+    pub(super) fn dismiss_logout_confirm_modal(&mut self) {
         self.logout_confirm_modal = None;
         self.status = "Stayed signed in.".to_string();
     }
 
-    fn confirm_logout(&mut self) {
+    pub(super) fn confirm_logout(&mut self) {
         if self.logout_confirm_modal.is_none() {
             return;
         }
@@ -117,7 +123,7 @@ impl AppState {
         self.queue_command(AppCommand::Logout);
     }
 
-    fn finish_logout(&mut self) {
+    pub(super) fn finish_logout(&mut self) {
         let credentials = self
             .session
             .as_ref()
@@ -151,7 +157,7 @@ impl AppState {
         self.status = "Logged out. Sign in again to continue.".to_string();
     }
 
-    fn handle_logout_confirm_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_logout_confirm_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
             _ if matches!(key.code, KeyCode::Esc)
                 || self.settings.key_matches(KeyAction::Back, key) =>
@@ -163,7 +169,7 @@ impl AppState {
         }
     }
 
-    fn handle_add_to_playlist_modal_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_add_to_playlist_modal_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
             _ if matches!(key.code, KeyCode::Esc)
                 || self.settings.key_matches(KeyAction::Back, key) =>
@@ -188,7 +194,7 @@ impl AppState {
         }
     }
 
-    fn move_add_to_playlist_selection(&mut self, delta: isize) {
+    pub(super) fn move_add_to_playlist_selection(&mut self, delta: isize) {
         let Some(current) = self
             .add_to_playlist_modal
             .as_ref()
@@ -217,7 +223,7 @@ impl AppState {
         }
     }
 
-    fn jump_add_to_playlist_selection(&mut self, index: usize) {
+    pub(super) fn jump_add_to_playlist_selection(&mut self, index: usize) {
         if self.playlists.is_empty() {
             self.status = "No playlists are available yet.".to_string();
             return;
@@ -233,7 +239,7 @@ impl AppState {
         }
     }
 
-    fn confirm_add_to_playlist_selection(&mut self) {
+    pub(super) fn confirm_add_to_playlist_selection(&mut self) {
         let Some(modal) = self.add_to_playlist_modal.clone() else {
             return;
         };
@@ -265,36 +271,36 @@ impl AppState {
         });
     }
 
-    fn max_help_scroll(&self) -> usize {
+    pub(super) fn max_help_scroll(&self) -> usize {
         self.help_row_count()
             .saturating_sub(self.help_visible_rows())
     }
 
-    fn scroll_help(&mut self, delta: isize) {
+    pub(super) fn scroll_help(&mut self, delta: isize) {
         let next = self.help_scroll as isize + delta;
         self.help_scroll = next.clamp(0, self.max_help_scroll() as isize) as usize;
     }
 
-    fn page_help(&mut self, down: bool) {
+    pub(super) fn page_help(&mut self, down: bool) {
         let step = self.help_visible_rows().max(1) as isize;
         self.scroll_help(if down { step } else { -step });
     }
 
-    fn content_page_size(&self) -> usize {
+    pub(super) fn content_page_size(&self) -> usize {
         self.viewport
             .height
             .saturating_sub(self.layout.playbar_height + 8)
             .max(6) as usize
     }
 
-    fn playlists_page_size(&self) -> usize {
+    pub(super) fn playlists_page_size(&self) -> usize {
         self.viewport
             .height
             .saturating_sub(self.layout.playbar_height + self.layout.library_height + 8)
             .max(4) as usize
     }
 
-    fn page_results(&mut self, down: bool) -> bool {
+    pub(super) fn page_results(&mut self, down: bool) -> bool {
         match self.focus {
             Focus::Content => self.page_content(down),
             Focus::Playlists => self.page_playlists(down),
@@ -302,7 +308,7 @@ impl AppState {
         }
     }
 
-    fn page_content(&mut self, down: bool) -> bool {
+    pub(super) fn page_content(&mut self, down: bool) -> bool {
         let len = self.current_content_len();
         if len == 0 {
             return down && self.maybe_queue_current_route_next_page();
@@ -330,7 +336,7 @@ impl AppState {
         moved || queued_more
     }
 
-    fn page_playlists(&mut self, down: bool) -> bool {
+    pub(super) fn page_playlists(&mut self, down: bool) -> bool {
         if self.playlists.is_empty() {
             return down && self.maybe_queue_more_playlists();
         }
@@ -354,13 +360,13 @@ impl AppState {
         moved || queued_more
     }
 
-    fn open_settings_menu(&mut self) {
+    pub(super) fn open_settings_menu(&mut self) {
         self.show_help = false;
         self.settings_menu = Some(SettingsMenuState::new(&self.settings));
         self.status = "Opened settings.".to_string();
     }
 
-    fn close_settings_menu(&mut self) {
+    pub(super) fn close_settings_menu(&mut self) {
         let discarded = self
             .settings_menu
             .as_ref()
@@ -374,7 +380,7 @@ impl AppState {
         };
     }
 
-    fn save_settings_menu(&mut self) {
+    pub(super) fn save_settings_menu(&mut self) {
         let Some(mut menu) = self.settings_menu.take() else {
             return;
         };
@@ -403,7 +409,7 @@ impl AppState {
         self.status = format!("Saved settings.{}", restart_note);
     }
 
-    fn handle_settings_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_settings_key(&mut self, key: KeyEvent) {
         let Some(mut menu) = self.settings_menu.take() else {
             return;
         };
@@ -487,7 +493,7 @@ impl AppState {
         self.settings_menu = Some(menu);
     }
 
-    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_mouse_event(&mut self, mouse: MouseEvent) {
         if self.mode == AppMode::Auth {
             self.handle_auth_mouse(mouse);
             return;
@@ -539,7 +545,7 @@ impl AppState {
         self.handle_main_mouse(mouse);
     }
 
-    fn handle_auth_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_auth_mouse(&mut self, mouse: MouseEvent) {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
@@ -559,7 +565,7 @@ impl AppState {
         }
     }
 
-    fn register_click(&mut self, target: MouseClickTarget) -> bool {
+    pub(super) fn register_click(&mut self, target: MouseClickTarget) -> bool {
         let now = Instant::now();
         let is_double_click = self.last_mouse_click.is_some_and(|previous| {
             previous.target == target && now.duration_since(previous.at) <= DOUBLE_CLICK_WINDOW
@@ -568,18 +574,18 @@ impl AppState {
         is_double_click
     }
 
-    fn focus_main_pane(&mut self, focus: Focus) {
+    pub(super) fn focus_main_pane(&mut self, focus: Focus) {
         self.set_focus(focus);
         self.status = format!("Focused {}.", focus.label());
     }
 
-    fn handle_error_modal_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_error_modal_mouse(&mut self, mouse: MouseEvent) {
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             self.dismiss_error_modal();
         }
     }
 
-    fn handle_logout_confirm_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_logout_confirm_mouse(&mut self, mouse: MouseEvent) {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
@@ -595,12 +601,12 @@ impl AppState {
         }
     }
 
-    fn handle_settings_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_settings_mouse(&mut self, mouse: MouseEvent) {
         let Some(area) = geometry::viewport_area(self) else {
             return;
         };
         let layout = geometry::settings_layout(area);
-        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+        if !geometry::rect_contains(layout.overlay, mouse.column, mouse.row) {
             return;
         }
 
@@ -614,7 +620,7 @@ impl AppState {
         }
 
         if let Some(delta) = mouse_scroll_delta(mouse.kind) {
-            if rect_contains(layout.list, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.list, mouse.column, mouse.row) {
                 menu.move_selection(delta);
             }
             self.settings_menu = Some(menu);
@@ -622,11 +628,11 @@ impl AppState {
         }
 
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-            if rect_contains(layout.tabs, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.tabs, mouse.column, mouse.row) {
                 if let Some(tab) = geometry::settings_tab_at(layout.tabs, mouse.column, mouse.row) {
                     menu.select_tab(tab);
                 }
-            } else if rect_contains(layout.list, mouse.column, mouse.row) {
+            } else if geometry::rect_contains(layout.list, mouse.column, mouse.row) {
                 let items = menu.items();
                 if let Some(index) = block_list_index_at_row(
                     layout.list,
@@ -660,40 +666,40 @@ impl AppState {
         self.settings_menu = Some(menu);
     }
 
-    fn handle_help_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_help_mouse(&mut self, mouse: MouseEvent) {
         let Some(area) = geometry::viewport_area(self) else {
             return;
         };
         let layout = geometry::help_layout(area);
-        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+        if !geometry::rect_contains(layout.overlay, mouse.column, mouse.row) {
             return;
         }
 
         if let Some(delta) = mouse_scroll_delta(mouse.kind) {
-            if rect_contains(layout.body, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.body, mouse.column, mouse.row) {
                 self.scroll_help(delta);
             }
         }
     }
 
-    fn handle_queue_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_queue_mouse(&mut self, mouse: MouseEvent) {
         let Some(area) = geometry::viewport_area(self) else {
             return;
         };
         let layout = geometry::queue_layout(area);
-        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+        if !geometry::rect_contains(layout.overlay, mouse.column, mouse.row) {
             return;
         }
 
         if let Some(delta) = mouse_scroll_delta(mouse.kind) {
-            if rect_contains(layout.body, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.body, mouse.column, mouse.row) {
                 self.move_queue_selection(delta > 0);
             }
             return;
         }
 
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            || !rect_contains(layout.body, mouse.column, mouse.row)
+            || !geometry::rect_contains(layout.body, mouse.column, mouse.row)
         {
             return;
         }
@@ -717,24 +723,24 @@ impl AppState {
         }
     }
 
-    fn handle_add_to_playlist_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_add_to_playlist_mouse(&mut self, mouse: MouseEvent) {
         let Some(area) = geometry::viewport_area(self) else {
             return;
         };
         let layout = geometry::add_to_playlist_layout(area);
-        if !rect_contains(layout.overlay, mouse.column, mouse.row) {
+        if !geometry::rect_contains(layout.overlay, mouse.column, mouse.row) {
             return;
         }
 
         if let Some(delta) = mouse_scroll_delta(mouse.kind) {
-            if rect_contains(layout.list, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.list, mouse.column, mouse.row) {
                 self.move_add_to_playlist_selection(delta);
             }
             return;
         }
 
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            || !rect_contains(layout.list, mouse.column, mouse.row)
+            || !geometry::rect_contains(layout.list, mouse.column, mouse.row)
         {
             return;
         }
@@ -767,27 +773,27 @@ impl AppState {
         }
     }
 
-    fn handle_main_mouse(&mut self, mouse: MouseEvent) {
+    pub(super) fn handle_main_mouse(&mut self, mouse: MouseEvent) {
         let Some(layout) = geometry::main_layout_from_viewport(self) else {
             return;
         };
 
         if let Some(delta) = mouse_scroll_delta(mouse.kind) {
-            if rect_contains(layout.library, mouse.column, mouse.row) {
+            if geometry::rect_contains(layout.library, mouse.column, mouse.row) {
                 self.focus_main_pane(Focus::Library);
                 self.apply(if delta > 0 {
                     Action::MoveDown
                 } else {
                     Action::MoveUp
                 });
-            } else if rect_contains(layout.playlists, mouse.column, mouse.row) {
+            } else if geometry::rect_contains(layout.playlists, mouse.column, mouse.row) {
                 self.focus_main_pane(Focus::Playlists);
                 self.apply(if delta > 0 {
                     Action::MoveDown
                 } else {
                     Action::MoveUp
                 });
-            } else if rect_contains(layout.content, mouse.column, mouse.row) {
+            } else if geometry::rect_contains(layout.content, mouse.column, mouse.row) {
                 self.focus_main_pane(Focus::Content);
                 self.apply(if delta > 0 {
                     Action::MoveDown
@@ -802,19 +808,19 @@ impl AppState {
             return;
         }
 
-        if rect_contains(layout.search, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.search, mouse.column, mouse.row) {
             self.begin_search_input();
             return;
         }
 
-        if rect_contains(layout.help, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.help, mouse.column, mouse.row) {
             self.help_scroll = 0;
             self.show_help = true;
             self.status = "Showing help menu.".to_string();
             return;
         }
 
-        if rect_contains(layout.settings, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.settings, mouse.column, mouse.row) {
             self.open_settings_menu();
             return;
         }
@@ -832,7 +838,7 @@ impl AppState {
             return;
         }
 
-        if rect_contains(layout.library, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.library, mouse.column, mouse.row) {
             self.focus_main_pane(Focus::Library);
             return;
         }
@@ -850,7 +856,7 @@ impl AppState {
             return;
         }
 
-        if rect_contains(layout.playlists, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.playlists, mouse.column, mouse.row) {
             self.focus_main_pane(Focus::Playlists);
             return;
         }
@@ -875,17 +881,17 @@ impl AppState {
             return;
         }
 
-        if rect_contains(layout.content, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.content, mouse.column, mouse.row) {
             self.focus_main_pane(Focus::Content);
             return;
         }
 
-        if rect_contains(layout.playbar, mouse.column, mouse.row) {
+        if geometry::rect_contains(layout.playbar, mouse.column, mouse.row) {
             self.focus_main_pane(Focus::Playbar);
         }
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) {
+    pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
         if is_global_quit_key(key) {
             self.should_quit = true;
             return;
@@ -960,7 +966,7 @@ impl AppState {
         }
     }
 
-    fn handle_help_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_help_key(&mut self, key: KeyEvent) {
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::F(1))
             || self.settings.key_matches(KeyAction::Help, key)
             || self.settings.key_matches(KeyAction::Back, key)
@@ -978,7 +984,7 @@ impl AppState {
         }
     }
 
-    fn handle_queue_key(&mut self, key: KeyEvent) {
+    pub(super) fn handle_queue_key(&mut self, key: KeyEvent) {
         match (key.code, key.modifiers) {
             _ if matches!(key.code, KeyCode::Esc)
                 || self.settings.key_matches(KeyAction::Back, key) =>
@@ -997,7 +1003,7 @@ impl AppState {
         }
     }
 
-    fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
+    pub(super) fn handle_main_shortcut_key(&mut self, key: KeyEvent) -> bool {
         match (key.code, key.modifiers) {
             (KeyCode::Char('v'), KeyModifiers::NONE) => {
                 self.toggle_visualizer();
@@ -1108,7 +1114,7 @@ impl AppState {
         }
     }
 
-    fn handle_route_key(&mut self, key: KeyEvent) -> bool {
+    pub(super) fn handle_route_key(&mut self, key: KeyEvent) -> bool {
         match self.route {
             Route::Search => match key.code {
                 KeyCode::Char('1') => {
@@ -1140,7 +1146,7 @@ impl AppState {
         }
     }
 
-    fn handle_paste_event(&mut self, text: &str) {
+    pub(super) fn handle_paste_event(&mut self, text: &str) {
         match self.mode {
             AppMode::Auth => {
                 self.auth.paste_text(text);
@@ -1165,7 +1171,7 @@ impl AppState {
         }
     }
 
-    fn handle_search_key(&mut self, key: KeyEvent) -> bool {
+    pub(super) fn handle_search_key(&mut self, key: KeyEvent) -> bool {
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 self.focus = self.search_return_focus;
@@ -1227,7 +1233,7 @@ impl AppState {
         }
     }
 
-    fn begin_search_input(&mut self) {
+    pub(super) fn begin_search_input(&mut self) {
         if self.focus != Focus::Search {
             self.search_return_focus = self.focus;
         }
@@ -1236,7 +1242,7 @@ impl AppState {
         self.status = "Editing search query. Press Enter to search.".to_string();
     }
 
-    fn handle_auth_intent(&mut self, intent: AuthIntent) {
+    pub(super) fn handle_auth_intent(&mut self, intent: AuthIntent) {
         match intent {
             AuthIntent::OpenAppsPage => {
                 self.status = "Opening SoundCloud app registration in your browser...".to_string();
@@ -1306,7 +1312,7 @@ impl AppState {
         }
     }
 
-    fn complete_auth(&mut self, session: AuthorizedSession) {
+    pub(super) fn complete_auth(&mut self, session: AuthorizedSession) {
         self.mode = AppMode::Main;
         self.loading = None;
         self.session = Some(session.clone());
@@ -1326,7 +1332,7 @@ impl AppState {
         self.sync_window_title();
     }
 
-    fn apply_runtime_settings(&mut self, previous: &Settings) {
+    pub(super) fn apply_runtime_settings(&mut self, previous: &Settings) {
         if !self.settings.draw_cover_art {
             self.cover_art = CoverArt::default();
         }
@@ -1338,7 +1344,7 @@ impl AppState {
         self.sync_window_title();
     }
 
-    fn apply_startup_behavior(&mut self) {
+    pub(super) fn apply_startup_behavior(&mut self) {
         let Some(track) = self
             .recent_history
             .entries
@@ -1372,7 +1378,7 @@ impl AppState {
         }
     }
 
-    fn dismiss_help(&mut self) {
+    pub(super) fn dismiss_help(&mut self) {
         self.show_help = false;
 
         if self.help_requires_acknowledgement {
@@ -1387,13 +1393,13 @@ impl AppState {
         }
     }
 
-    fn adjust_sidebar_width(&mut self, delta: i16) {
+    pub(super) fn adjust_sidebar_width(&mut self, delta: i16) {
         let next = (self.layout.sidebar_width_percent as i16 + delta).clamp(14, 40) as u16;
         self.layout.sidebar_width_percent = next;
         self.status = format!("Sidebar width set to {}%.", next);
     }
 
-    fn adjust_primary_panel_height(&mut self, delta: i16) {
+    pub(super) fn adjust_primary_panel_height(&mut self, delta: i16) {
         match self.focus {
             Focus::Library => {
                 let next = (self.layout.library_height as i16 + delta).clamp(4, 18) as u16;
@@ -1408,11 +1414,11 @@ impl AppState {
         }
     }
 
-    fn reset_layout(&mut self) {
+    pub(super) fn reset_layout(&mut self) {
         self.layout = LayoutState::default();
         self.status = "Layout reset to defaults.".to_string();
     }
-    fn submit_search(&mut self) {
+    pub(super) fn submit_search(&mut self) {
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
             self.status = "Enter a search query first.".to_string();
@@ -1429,20 +1435,20 @@ impl AppState {
         self.request_route_load(false);
     }
 
-    fn insert_search_char(&mut self, ch: char) {
+    pub(super) fn insert_search_char(&mut self, ch: char) {
         let mut chars = self.search_query.chars().collect::<Vec<_>>();
         chars.insert(self.search_cursor, ch);
         self.search_query = chars.into_iter().collect();
         self.search_cursor += 1;
     }
 
-    fn insert_search_text(&mut self, text: &str) {
+    pub(super) fn insert_search_text(&mut self, text: &str) {
         for ch in text.chars() {
             self.insert_search_char(ch);
         }
     }
 
-    fn delete_search_to_start(&mut self) {
+    pub(super) fn delete_search_to_start(&mut self) {
         if self.search_cursor == 0 {
             return;
         }
@@ -1453,7 +1459,7 @@ impl AppState {
         self.status = "Deleted text before the cursor.".to_string();
     }
 
-    fn delete_search_to_end(&mut self) {
+    pub(super) fn delete_search_to_end(&mut self) {
         let chars = self.search_query.chars().collect::<Vec<_>>();
         if self.search_cursor >= chars.len() {
             return;
@@ -1463,7 +1469,7 @@ impl AppState {
         self.status = "Deleted text after the cursor.".to_string();
     }
 
-    fn delete_previous_word(&mut self) {
+    pub(super) fn delete_previous_word(&mut self) {
         if self.search_cursor == 0 {
             return;
         }
@@ -1485,7 +1491,7 @@ impl AppState {
         self.status = "Deleted the previous word.".to_string();
     }
 
-    fn backspace_search(&mut self) {
+    pub(super) fn backspace_search(&mut self) {
         if self.search_cursor == 0 {
             return;
         }
@@ -1496,7 +1502,7 @@ impl AppState {
         self.search_cursor -= 1;
     }
 
-    fn delete_search(&mut self) {
+    pub(super) fn delete_search(&mut self) {
         let mut chars = self.search_query.chars().collect::<Vec<_>>();
         if self.search_cursor >= chars.len() {
             return;

@@ -14,6 +14,7 @@ use crate::{
         cover_art::CoverArtRenderer,
         widgets::{header_style, pane_block},
     },
+    util::time::format_seconds_f64,
 };
 
 const CONTROLS: [&str; 8] = [
@@ -241,13 +242,6 @@ fn progress_label(app: &AppState) -> String {
         "{}/{} ({})",
         app.now_playing.elapsed_label, app.now_playing.duration_label, remaining
     )
-}
-
-fn format_seconds_f64(seconds: f64) -> String {
-    let seconds = seconds.max(0.0).round() as u64;
-    let minutes = seconds / 60;
-    let remainder = seconds % 60;
-    format!("{minutes}:{remainder:02}")
 }
 
 #[cfg(test)]

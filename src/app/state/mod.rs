@@ -1,9 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
+    ops::Deref,
     time::{Duration, Instant},
 };
 
-use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
@@ -22,14 +22,23 @@ use crate::{
     soundcloud::{
         auth::AuthorizedSession,
         models::{
-            FeedItem, FeedOrigin, PlaylistSummary as SoundcloudPlaylist, SearchResults,
-            TrackSummary, UserSummary,
+            FeedItem, FeedOrigin, PlaylistSummary as SoundcloudPlaylist, TrackSummary, UserSummary,
         },
         paging::Page,
     },
-    ui::{geometry, theme::Theme, widgets::pane_inner},
+    ui::{geometry, theme::Theme},
     visualizer::{SpectrumFrame, VisualizerCommand, VisualizerStyle},
 };
+
+mod content;
+mod events;
+mod helpers;
+mod init;
+mod interaction;
+mod loading;
+mod playback;
+
+use helpers::*;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -57,7 +66,7 @@ pub struct AppState {
     pub search_cursor: usize,
     pub search_return_focus: Focus,
     pub library_items: Vec<LibraryItem>,
-    pub playlists: Vec<SidebarPlaylist>,
+    pub playlists: PlaylistSidebarState,
     pub feed_rows: Vec<ContentRow>,
     pub liked_rows: Vec<ContentRow>,
     pub recent_rows: Vec<ContentRow>,
@@ -81,24 +90,28 @@ pub struct AppState {
     active_playlist_urn: Option<String>,
     known_playlists: HashMap<String, SoundcloudPlaylist>,
     feed: CollectionState<FeedItem>,
+    feed_request: RequestTracker,
     liked_tracks: CollectionState<TrackSummary>,
+    liked_tracks_request: RequestTracker,
     albums: CollectionState<SoundcloudPlaylist>,
+    albums_request: RequestTracker,
     following: CollectionState<UserSummary>,
+    following_request: RequestTracker,
     playlist_tracks: HashMap<String, CollectionState<TrackSummary>>,
+    playlist_track_requests: HashMap<String, RequestTracker>,
     search_tracks: CollectionState<TrackSummary>,
     search_playlists: CollectionState<SoundcloudPlaylist>,
     search_users: CollectionState<UserSummary>,
+    search_request: RequestTracker,
     search_view: SearchView,
     active_user_profile: Option<UserSummary>,
     user_profile_tracks: CollectionState<TrackSummary>,
+    user_profile_tracks_request: RequestTracker,
     user_profile_playlists: CollectionState<SoundcloudPlaylist>,
+    user_profile_playlists_request: RequestTracker,
     user_profile_view: UserProfileView,
     search_cache: HashMap<String, SearchCache>,
     playback_plan: PlaybackPlanState,
-    playlists_loading: bool,
-    playlists_loaded: bool,
-    playlists_error: Option<String>,
-    playlists_next_href: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -341,6 +354,21 @@ struct SearchCache {
     users: CollectionState<UserSummary>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PlaylistSidebarState {
+    items: Vec<SidebarPlaylist>,
+    next_href: Option<String>,
+    loading: bool,
+    error: Option<String>,
+    loaded: bool,
+    request: RequestTracker,
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+struct RequestTracker {
+    current: u64,
+}
+
 impl<T> Default for CollectionState<T> {
     fn default() -> Self {
         Self {
@@ -433,11 +461,125 @@ impl SearchCache {
     }
 }
 
-include!("init.rs");
-include!("events.rs");
-include!("content.rs");
-include!("playback.rs");
-include!("loading.rs");
+impl PlaylistSidebarState {
+    fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    fn next_href(&self) -> Option<&str> {
+        self.next_href.as_deref()
+    }
+
+    fn start_loading(&mut self, append: bool) -> u64 {
+        self.loading = true;
+        self.error = None;
+        if !append {
+            self.next_href = None;
+            self.items.clear();
+        }
+        self.request.issue(append)
+    }
+
+    fn apply_page(&mut self, page: Page<SidebarPlaylist>, append: bool) {
+        self.loading = false;
+        self.error = None;
+        self.loaded = true;
+        self.next_href = page.next_href;
+        if append {
+            self.items.extend(page.items);
+        } else {
+            self.items = page.items;
+        }
+    }
+
+    fn fail(&mut self, error: String) {
+        self.loading = false;
+        self.loaded = true;
+        self.error = Some(error);
+    }
+
+    fn reset(&mut self) {
+        self.items.clear();
+        self.loading = false;
+        self.loaded = false;
+        self.error = None;
+        self.next_href = None;
+        self.request = RequestTracker::default();
+    }
+
+    fn invalidate(&mut self) {
+        self.items.clear();
+        self.loading = false;
+        self.loaded = false;
+        self.error = None;
+        self.next_href = None;
+        self.request.invalidate();
+    }
+
+    fn matches_request(&self, request_id: u64) -> bool {
+        self.request.matches(request_id)
+    }
+
+    fn title(&self) -> String {
+        if self.loading {
+            "Playlists (loading...)".to_string()
+        } else if self.error.is_some() {
+            "Playlists (error)".to_string()
+        } else if self.loaded && self.items.is_empty() {
+            "Playlists (empty)".to_string()
+        } else if self.next_href.is_some() {
+            format!("Playlists ({}, more available)", self.items.len())
+        } else {
+            format!("Playlists ({})", self.items.len())
+        }
+    }
+
+    fn placeholder(&self) -> Option<String> {
+        if self.loading && self.items.is_empty() {
+            Some("Loading playlists...".to_string())
+        } else if self.error.is_some() {
+            Some("Could not load playlists. Press F5 to retry.".to_string())
+        } else if self.loaded && self.items.is_empty() {
+            Some("No playlists are available for this account yet.".to_string())
+        } else {
+            None
+        }
+    }
+}
+
+impl Deref for PlaylistSidebarState {
+    type Target = [SidebarPlaylist];
+
+    fn deref(&self) -> &Self::Target {
+        self.items.as_slice()
+    }
+}
+
+impl RequestTracker {
+    fn issue(&mut self, append: bool) -> u64 {
+        if !append || self.current == 0 {
+            self.current = self.current.saturating_add(1).max(1);
+        }
+
+        self.current
+    }
+
+    fn invalidate(&mut self) {
+        self.current = self.current.saturating_add(1).max(1);
+    }
+
+    fn matches(self, request_id: u64) -> bool {
+        self.current == request_id
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -458,254 +600,5 @@ mod tests {
             state.state_label_with_more_available(false),
             "Loaded 3 items"
         );
-    }
-}
-include!("interaction.rs");
-
-fn mock_playlists() -> Vec<SidebarPlaylist> {
-    vec![
-        SidebarPlaylist {
-            urn: None,
-            title: "Sunset Drive".to_string(),
-            description: "Warm house and road-trip cuts".to_string(),
-            creator: None,
-            track_count: None,
-            tracks: mock_track_rows(&[
-                ("Golden Hour", "Tycho", "Sunset Drive", "4:12"),
-                ("La Mar", "Brijean", "Sunset Drive", "3:38"),
-                ("Kites", "Bonobo", "Sunset Drive", "5:14"),
-                ("Silk Route", "Ross From Friends", "Sunset Drive", "4:41"),
-            ]),
-        },
-        SidebarPlaylist {
-            urn: None,
-            title: "Low Light".to_string(),
-            description: "Late-night electronics and downtempo".to_string(),
-            creator: None,
-            track_count: None,
-            tracks: mock_track_rows(&[
-                ("Night Bloom", "Tourist", "Low Light", "3:56"),
-                ("Shoreline", "Ford.", "Low Light", "4:05"),
-                ("Blink", "Four Tet", "Low Light", "4:24"),
-                ("Shiver", "Catching Flies", "Low Light", "3:49"),
-            ]),
-        },
-        SidebarPlaylist {
-            urn: None,
-            title: "Warehouse Mornings".to_string(),
-            description: "Minimal grooves for long focus blocks".to_string(),
-            creator: None,
-            track_count: None,
-            tracks: mock_track_rows(&[
-                ("Tracer", "Djoko", "Warehouse Mornings", "6:18"),
-                ("Pebble", "Bicep", "Warehouse Mornings", "5:02"),
-                ("Sunline", "Logic1000", "Warehouse Mornings", "4:47"),
-                ("Lifted", "Mall Grab", "Warehouse Mornings", "5:23"),
-            ]),
-        },
-        SidebarPlaylist {
-            urn: None,
-            title: "Cloud Sketches".to_string(),
-            description: "Ambient drafts and instrumental loops".to_string(),
-            creator: None,
-            track_count: None,
-            tracks: mock_track_rows(&[
-                ("Paper Sky", "Helios", "Cloud Sketches", "3:18"),
-                ("Still Water", "Hania Rani", "Cloud Sketches", "4:32"),
-                ("Moss", "Kaitlyn Aurelia Smith", "Cloud Sketches", "5:07"),
-                ("Resin", "Rival Consoles", "Cloud Sketches", "4:28"),
-            ]),
-        },
-    ]
-}
-
-fn mock_track_rows(items: &[(&str, &str, &str, &str)]) -> Vec<ContentRow> {
-    items
-        .iter()
-        .map(|(title, artist, collection, length)| ContentRow {
-            columns: [
-                (*title).to_string(),
-                (*artist).to_string(),
-                (*collection).to_string(),
-                (*length).to_string(),
-            ],
-        })
-        .collect()
-}
-
-fn format_seconds_f64(seconds: f64) -> String {
-    let seconds = seconds.max(0.0).round() as u64;
-    let minutes = seconds / 60;
-    let remainder = seconds % 60;
-    format!("{minutes}:{remainder:02}")
-}
-
-fn pretty_activity_type(activity_type: &str) -> String {
-    activity_type
-        .replace('_', " ")
-        .split_whitespace()
-        .map(|segment| {
-            let mut chars = segment.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn track_row_with_access(track: &TrackSummary) -> ContentRow {
-    ContentRow {
-        columns: [
-            track.title.clone(),
-            track.artist.clone(),
-            track.access_label().to_string(),
-            track.duration_label(),
-        ],
-    }
-}
-
-fn playlist_row(playlist: &SoundcloudPlaylist) -> ContentRow {
-    ContentRow {
-        columns: [
-            playlist.title.clone(),
-            playlist.creator.clone(),
-            playlist.track_count_label(),
-            playlist.year_label(),
-        ],
-    }
-}
-
-fn user_row(user: &UserSummary) -> ContentRow {
-    ContentRow {
-        columns: [
-            user.username.clone(),
-            user.followers_label(),
-            user.spotlight_label(),
-            "Profile".to_string(),
-        ],
-    }
-}
-
-fn history_row(entry: &RecentlyPlayedEntry) -> ContentRow {
-    ContentRow {
-        columns: [
-            entry.track.title.clone(),
-            entry.track.artist.clone(),
-            entry.context.clone(),
-            relative_time_label(entry.played_at_epoch),
-        ],
-    }
-}
-
-fn relative_time_label(played_at_epoch: i64) -> String {
-    let elapsed = (Utc::now().timestamp() - played_at_epoch).max(0);
-
-    match elapsed {
-        0..=59 => "just now".to_string(),
-        60..=3_599 => format!("{}m ago", elapsed / 60),
-        3_600..=86_399 => format!("{}h ago", elapsed / 3_600),
-        86_400..=604_799 => format!("{}d ago", elapsed / 86_400),
-        _ => format!("{}w ago", elapsed / 604_800),
-    }
-}
-
-fn playlist_summary_subtitle(playlist: &SoundcloudPlaylist) -> String {
-    if !playlist.description.trim().is_empty() {
-        playlist.description.clone()
-    } else {
-        format!("By {} - {}", playlist.creator, playlist.track_count_label())
-    }
-}
-
-fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
-    column >= rect.x
-        && column < rect.x.saturating_add(rect.width)
-        && row >= rect.y
-        && row < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_scroll_delta(kind: MouseEventKind) -> Option<isize> {
-    match kind {
-        MouseEventKind::ScrollDown => Some(1),
-        MouseEventKind::ScrollUp => Some(-1),
-        _ => None,
-    }
-}
-
-fn block_list_index_at_row(
-    area: ratatui::layout::Rect,
-    column: u16,
-    row: u16,
-    len: usize,
-    selected: usize,
-) -> Option<usize> {
-    row_index_at(pane_inner(area), column, row, len, selected, 0)
-}
-
-fn plain_list_index_at_row(
-    area: ratatui::layout::Rect,
-    column: u16,
-    row: u16,
-    len: usize,
-    selected: usize,
-) -> Option<usize> {
-    row_index_at(area, column, row, len, selected, 0)
-}
-
-fn table_index_at_row(
-    area: ratatui::layout::Rect,
-    column: u16,
-    row: u16,
-    len: usize,
-    selected: usize,
-) -> Option<usize> {
-    row_index_at(area, column, row, len, selected, 1)
-}
-
-fn row_index_at(
-    area: ratatui::layout::Rect,
-    column: u16,
-    row: u16,
-    len: usize,
-    selected: usize,
-    header_rows: u16,
-) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-
-    if column < area.x || column >= area.x.saturating_add(area.width) {
-        return None;
-    }
-
-    let start_row = area.y.saturating_add(header_rows);
-    if row < start_row || row >= area.y.saturating_add(area.height) {
-        return None;
-    }
-
-    let visible_rows = area.height.saturating_sub(header_rows) as usize;
-    if visible_rows == 0 {
-        return None;
-    }
-
-    let start_index = selected
-        .min(len.saturating_sub(1))
-        .saturating_sub(visible_rows.saturating_sub(1));
-    let index = start_index + row.saturating_sub(start_row) as usize;
-
-    (index < len).then_some(index)
-}
-
-fn help_row(
-    description: impl Into<String>,
-    event: impl Into<String>,
-    context: impl Into<String>,
-) -> HelpRow {
-    HelpRow {
-        description: description.into(),
-        event: event.into(),
-        context: context.into(),
     }
 }

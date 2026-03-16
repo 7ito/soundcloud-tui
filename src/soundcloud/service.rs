@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -160,6 +161,10 @@ impl SoundcloudService {
         Ok(Self {
             client: SoundcloudClient::new()?,
         })
+    }
+
+    pub fn http(&self) -> &Client {
+        self.client.http()
     }
 
     pub async fn load_feed(

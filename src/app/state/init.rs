@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppState {
     pub fn new() -> Self {
         Self::new_with_persistence(Settings::default(), RecentlyPlayedStore::default())
@@ -31,7 +33,14 @@ impl AppState {
             },
         ];
 
-        let playlists = mock_playlists();
+        let mut playlists = PlaylistSidebarState::default();
+        playlists.apply_page(
+            Page {
+                items: mock_playlists(),
+                next_href: None,
+            },
+            false,
+        );
         let feed_rows = mock_track_rows(&[
             ("Canvas", "Tourist", "From Nils Frahm repost", "4:11"),
             ("Pillar", "Bonobo", "Friends upload", "3:54"),
@@ -145,24 +154,28 @@ impl AppState {
             active_playlist_urn: None,
             known_playlists: HashMap::new(),
             feed: CollectionState::default(),
+            feed_request: RequestTracker::default(),
             liked_tracks: CollectionState::default(),
+            liked_tracks_request: RequestTracker::default(),
             albums: CollectionState::default(),
+            albums_request: RequestTracker::default(),
             following: CollectionState::default(),
+            following_request: RequestTracker::default(),
             playlist_tracks: HashMap::new(),
+            playlist_track_requests: HashMap::new(),
             search_tracks: CollectionState::default(),
             search_playlists: CollectionState::default(),
             search_users: CollectionState::default(),
+            search_request: RequestTracker::default(),
             search_view: SearchView::Tracks,
             active_user_profile: None,
             user_profile_tracks: CollectionState::default(),
+            user_profile_tracks_request: RequestTracker::default(),
             user_profile_playlists: CollectionState::default(),
+            user_profile_playlists_request: RequestTracker::default(),
             user_profile_view: UserProfileView::Tracks,
             search_cache: HashMap::new(),
             playback_plan: PlaybackPlanState::default(),
-            playlists_loading: false,
-            playlists_loaded: false,
-            playlists_error: None,
-            playlists_next_href: None,
         }
     }
 

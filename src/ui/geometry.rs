@@ -645,7 +645,7 @@ fn centered_rect(area: Rect, margin: u16, max_width: u16, max_height: u16) -> Re
     horizontal[0]
 }
 
-fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+pub(crate) fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
     column >= rect.x
         && column < rect.x.saturating_add(rect.width)
         && row >= rect.y
