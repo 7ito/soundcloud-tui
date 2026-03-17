@@ -322,7 +322,7 @@ fn credentials_saved_event_starts_browser_flow() {
     assert_eq!(app.auth.step, AuthStep::WaitingForBrowser);
     assert_eq!(
         app.status,
-        "Saved credentials securely in your OS keyring. Authorize the app in your browser."
+        "Saved credentials to local storage. Authorize the app in your browser."
     );
 
     match app.take_pending_command() {
@@ -337,11 +337,11 @@ fn credentials_saved_event_starts_browser_flow() {
 }
 
 #[test]
-fn auth_restore_failure_with_keyring_error_shows_linux_guidance() {
+fn auth_restore_failure_with_local_storage_error_shows_file_guidance() {
     let mut app = AppState::new_onboarding(Credentials::default());
 
     app.dispatch_event(AppEvent::AuthRestoreComplete(Err(
-        "Could not access SoundCloud session tokens in your OS keyring\n\nThe name org.freedesktop.secrets was not provided by any service files"
+        "Could not access SoundCloud session tokens in local storage\n\nPermission denied (os error 13)"
             .to_string(),
     )));
 
@@ -351,11 +351,10 @@ fn auth_restore_failure_with_keyring_error_shows_linux_guidance() {
             .error
             .as_ref()
             .expect("auth error")
-            .contains("org.freedesktop.secrets")
+            .contains("Permission denied")
     );
 
-    #[cfg(target_os = "linux")]
-    assert!(app.auth.info.contains("gnome-keyring"));
+    assert!(app.auth.info.contains("writable"));
 }
 
 #[test]

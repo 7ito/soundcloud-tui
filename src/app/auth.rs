@@ -78,7 +78,7 @@ impl AuthState {
             callback_input: TextInput::default(),
             auth_url: None,
             pending_authorization: None,
-            info: "Enter your SoundCloud app credentials to continue. They will be stored securely in your OS keyring.".to_string(),
+            info: "Enter your SoundCloud app credentials to continue. They will be stored locally for your user account.".to_string(),
             error: None,
         }
     }
@@ -98,7 +98,7 @@ impl AuthState {
     pub fn set_checking_session(&mut self) {
         self.step = AuthStep::CheckingSession;
         self.focus = AuthFocus::OpenAppsPage;
-        self.info = "Checking your OS keyring for an existing SoundCloud session...".to_string();
+        self.info = "Checking local storage for an existing SoundCloud session...".to_string();
         self.error = None;
     }
 
@@ -108,7 +108,7 @@ impl AuthState {
         self.auth_url = Some(request.authorize_url.clone());
         self.pending_authorization = Some(request);
         self.info =
-            "Authorize the app in your browser, then return here. Your credentials are already stored securely in your OS keyring.".to_string();
+            "Authorize the app in your browser, then return here. Your credentials are already stored locally for your user account.".to_string();
         self.error = None;
         self.callback_input = TextInput::default();
     }
@@ -126,7 +126,7 @@ impl AuthState {
         self.pending_authorization = None;
         self.callback_input = TextInput::default();
         self.info =
-            "Update your SoundCloud app credentials and continue. They will be stored securely in your OS keyring.".to_string();
+            "Update your SoundCloud app credentials and continue. They will be stored locally for your user account.".to_string();
     }
 
     pub fn credentials(&self) -> Credentials {

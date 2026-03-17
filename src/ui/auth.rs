@@ -26,9 +26,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
             "Connect your SoundCloud account",
             header_style(app),
         )),
-        Line::from(
-            "This Linux-first TUI stores credentials and tokens securely in your OS keyring.",
-        ),
+        Line::from("This TUI stores credentials and tokens in local files for your user account."),
         Line::from(
             "Create a SoundCloud app, enter its credentials, then authorize in your browser.",
         ),
@@ -57,7 +55,7 @@ fn render_checking(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let body = Paragraph::new(vec![
         Line::from(format!("Checking for an existing SoundCloud session{dots}")),
         Line::from(
-            "If saved credentials and session tokens in your OS keyring are valid, the player shell opens automatically.",
+            "If saved credentials and session tokens in local storage are valid, the player shell opens automatically.",
         ),
         Line::from("Otherwise you will land on the credential form below."),
     ])
@@ -125,8 +123,8 @@ fn render_credentials(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     );
 
     let reminder = Paragraph::new(vec![
-        Line::from("Credentials are stored securely in your OS keyring."),
-        Line::from("Linux users: we recommend gnome-keyring; soundcloud-tui creates its own Secret Service collection when needed."),
+        Line::from("Credentials are stored in local files that are limited to your user account."),
+        Line::from("soundcloud-tui keeps credentials in its config directory and session tokens in its state directory."),
         Line::from("Click a field to place the cursor, or use Tab/Up/Down to move focus and Enter on buttons."),
         Line::from("Paste works with terminal paste shortcuts and with Ctrl+V when clipboard access is available."),
     ])
@@ -139,7 +137,7 @@ fn render_waiting(frame: &mut Frame<'_>, area: Rect, app: &AppState) {
     let layout = geometry::auth_waiting_layout(area);
 
     let instructions = Paragraph::new(vec![
-        Line::from("The credentials were saved to your OS keyring. Next, approve access in your browser."),
+        Line::from("The credentials were saved to local storage. Next, approve access in your browser."),
         Line::from("SoundCloud will redirect back to your localhost callback URI when authorization finishes."),
         Line::from("If automatic capture fails, switch to manual callback mode and paste the full redirected URL."),
     ])

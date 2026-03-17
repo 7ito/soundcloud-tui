@@ -16,12 +16,13 @@ impl AppState {
                 self.auth.set_waiting_for_browser(request.clone());
                 self.loading = None;
                 self.status =
-                    "Saved credentials securely in your OS keyring. Authorize the app in your browser.".to_string();
+                    "Saved credentials to local storage. Authorize the app in your browser."
+                        .to_string();
                 self.queue_command(AppCommand::OpenUrl(request.authorize_url.clone()));
                 self.queue_command(AppCommand::WaitForOAuthCallback(request));
             }
             AppEvent::CredentialsSaveFailed(error) => {
-                let message = format!("Could not save credentials in your OS keyring: {error}");
+                let message = format!("Could not save credentials to local storage: {error}");
                 self.auth.set_error(message.clone());
                 if let Some(hint) = crate::config::secure_store::troubleshooting_hint(&error) {
                     self.auth.set_info(hint);
@@ -84,7 +85,7 @@ impl AppState {
                 self.show_main_error(
                     "Could not log out",
                     format!(
-                        "Could not clear the saved SoundCloud session from your OS keyring.\n\n{error}{guidance}"
+                        "Could not clear the saved SoundCloud session from local storage.\n\n{error}{guidance}"
                     ),
                 );
             }

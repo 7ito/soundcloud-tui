@@ -1,339 +1,137 @@
-use std::sync::Arc;
+use std::{
+    fs,
+    io::{ErrorKind, Write},
+    path::Path,
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Serialize, de::DeserializeOwned};
 
-const SERVICE_NAME: &str = "soundcloud-tui";
-#[cfg(target_os = "linux")]
-const LINUX_COLLECTION: &str = "soundcloud-tui";
+use crate::config::paths::AppPaths;
 
 pub const CREDENTIALS_ENTRY: &str = "oauth-credentials";
 pub const TOKENS_ENTRY: &str = "oauth-tokens";
 
-pub fn troubleshooting_hint(error: &str) -> Option<&'static str> {
-    if !cfg!(target_os = "linux") {
-        return None;
-    }
+#[cfg(unix)]
+const PRIVATE_FILE_MODE: u32 = 0o600;
 
+pub fn troubleshooting_hint(error: &str) -> Option<&'static str> {
     let error = error.to_ascii_lowercase();
-    if error.contains("org.freedesktop.secrets")
-        || error.contains("the name is not activatable")
-        || error.contains("aliases/default")
-        || error.contains("no result found")
-        || error.contains("secret service")
-        || error.contains("secret collection")
-        || error.contains("default collection")
-        || error.contains("dbus")
+    if error.contains("permission denied")
+        || error.contains("access is denied")
+        || error.contains("operation not permitted")
+        || error.contains("read-only file system")
     {
         Some(
-            "Linux tip: install and start gnome-keyring, then log into a fresh graphical session so soundcloud-tui can create its own Secret Service collection.",
+            "Check that your soundcloud-tui config and state directories are writable by your user account.",
         )
     } else {
         None
     }
 }
 
-pub fn load_secret<T>(entry_name: &str, label: &str) -> Result<Option<T>>
+pub fn load_secret<T>(paths: &AppPaths, entry_name: &str, label: &str) -> Result<Option<T>>
 where
     T: DeserializeOwned,
 {
-    let Some(raw) = load_raw_secret(entry_name)
-        .with_context(|| format!("Could not access {label} in your OS keyring"))?
-    else {
+    let path = path_for(paths, entry_name)?;
+    if !path.exists() {
         return Ok(None);
-    };
+    }
+
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("Could not access {label} in local storage"))?;
 
     serde_json::from_str(&raw)
         .map(Some)
-        .map_err(|error| anyhow!("invalid {label} stored in your OS keyring: {error}"))
+        .map_err(|error| anyhow!("invalid {label} stored in local storage: {error}"))
 }
 
-pub fn save_secret<T>(entry_name: &str, label: &str, value: &T) -> Result<()>
+pub fn save_secret<T>(paths: &AppPaths, entry_name: &str, label: &str, value: &T) -> Result<()>
 where
     T: Serialize,
 {
-    let raw = serde_json::to_string(value)?;
-    save_raw_secret(entry_name, &raw)
-        .with_context(|| format!("Could not save {label} to your OS keyring"))
+    let path = path_for(paths, entry_name)?;
+    ensure_parent_dir(path)?;
+    let raw = serde_json::to_string_pretty(value)?;
+    write_private_file(path, &raw)
+        .with_context(|| format!("Could not save {label} to local storage"))
 }
 
-pub fn delete_secret(entry_name: &str, label: &str) -> Result<()> {
-    delete_raw_secret(entry_name)
-        .with_context(|| format!("Could not remove {label} from your OS keyring"))
-}
-
-pub(crate) trait SecretBackend: Send + Sync {
-    fn load(&self, entry_name: &str, target: Option<&str>) -> Result<Option<String>>;
-    fn save(&self, entry_name: &str, target: Option<&str>, value: &str) -> Result<()>;
-    fn delete(&self, entry_name: &str, target: Option<&str>) -> Result<()>;
-}
-
-struct OsKeyringBackend;
-
-impl SecretBackend for OsKeyringBackend {
-    fn load(&self, entry_name: &str, target: Option<&str>) -> Result<Option<String>> {
-        let entry = entry(entry_name, target)?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.into()),
+pub fn delete_secret(paths: &AppPaths, entry_name: &str, label: &str) -> Result<()> {
+    let path = path_for(paths, entry_name)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("Could not remove {label} from local storage"))
         }
     }
+}
 
-    fn save(&self, entry_name: &str, target: Option<&str>, value: &str) -> Result<()> {
-        let entry = entry(entry_name, target)?;
-        entry.set_password(value)?;
+fn path_for<'a>(paths: &'a AppPaths, entry_name: &str) -> Result<&'a Path> {
+    match entry_name {
+        CREDENTIALS_ENTRY => Ok(paths.credentials_file.as_path()),
+        TOKENS_ENTRY => Ok(paths.tokens_file.as_path()),
+        _ => Err(anyhow!("unknown local storage entry `{entry_name}`")),
+    }
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("local storage path is missing a parent directory")?;
+    fs::create_dir_all(parent)?;
+
+    #[cfg(unix)]
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+
+    Ok(())
+}
+
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(PRIVATE_FILE_MODE)
+            .open(path)?;
+        file.write_all(contents.as_bytes())?;
+        file.flush()?;
+        fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
         Ok(())
     }
 
-    fn delete(&self, entry_name: &str, target: Option<&str>) -> Result<()> {
-        let entry = entry(entry_name, target)?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
-        }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)?;
+        Ok(())
     }
 }
-
-fn load_raw_secret(entry_name: &str) -> Result<Option<String>> {
-    let backend = backend();
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(value) = backend.load(entry_name, Some(LINUX_COLLECTION))? {
-            return Ok(Some(value));
-        }
-
-        return Ok(backend.load(entry_name, None).ok().flatten());
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        backend.load(entry_name, None)
-    }
-}
-
-fn save_raw_secret(entry_name: &str, value: &str) -> Result<()> {
-    let backend = backend();
-
-    #[cfg(target_os = "linux")]
-    {
-        backend.save(entry_name, Some(LINUX_COLLECTION), value)?;
-        let _ = backend.delete(entry_name, None);
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        backend.save(entry_name, None, value)
-    }
-}
-
-fn delete_raw_secret(entry_name: &str) -> Result<()> {
-    let backend = backend();
-
-    #[cfg(target_os = "linux")]
-    {
-        backend.delete(entry_name, Some(LINUX_COLLECTION))?;
-        let _ = backend.delete(entry_name, None);
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        backend.delete(entry_name, None)
-    }
-}
-
-fn entry(entry_name: &str, target: Option<&str>) -> keyring::Result<keyring::Entry> {
-    match target {
-        #[cfg(target_os = "linux")]
-        Some(target) => keyring::Entry::new_with_target(target, SERVICE_NAME, entry_name),
-        _ => keyring::Entry::new(SERVICE_NAME, entry_name),
-    }
-}
-
-fn backend() -> Arc<dyn SecretBackend> {
-    #[cfg(test)]
-    {
-        if let Some(backend) = test_backend::get() {
-            return backend;
-        }
-    }
-
-    Arc::new(OsKeyringBackend)
-}
-
-#[cfg(test)]
-mod test_backend {
-    use std::{
-        collections::HashMap,
-        panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
-        sync::{Arc, Mutex, OnceLock},
-    };
-
-    use anyhow::{Result, bail};
-
-    use super::SecretBackend;
-
-    static BACKEND: OnceLock<Mutex<Option<Arc<dyn SecretBackend>>>> = OnceLock::new();
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    pub(crate) fn get() -> Option<Arc<dyn SecretBackend>> {
-        BACKEND
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-    }
-
-    pub(crate) fn with_test_backend<T>(
-        backend: Arc<dyn SecretBackend>,
-        run: impl FnOnce() -> T,
-    ) -> T {
-        let _guard = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        *BACKEND
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(backend);
-        let result = catch_unwind(AssertUnwindSafe(run));
-        *BACKEND
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
-        match result {
-            Ok(result) => result,
-            Err(payload) => resume_unwind(payload),
-        }
-    }
-
-    #[derive(Default)]
-    pub(crate) struct MemoryBackend {
-        entries: Mutex<HashMap<String, String>>,
-        load_error: Mutex<Option<String>>,
-        save_error: Mutex<Option<String>>,
-        delete_error: Mutex<Option<String>>,
-    }
-
-    impl MemoryBackend {
-        pub(crate) fn with_entry(self, entry_name: &str, value: &str) -> Self {
-            self.entries
-                .lock()
-                .expect("entries")
-                .insert(entry_key(entry_name, default_target()), value.to_string());
-            self
-        }
-
-        pub(crate) fn with_legacy_entry(self, entry_name: &str, value: &str) -> Self {
-            self.entries
-                .lock()
-                .expect("entries")
-                .insert(entry_key(entry_name, None), value.to_string());
-            self
-        }
-
-        pub(crate) fn fail_load(self, message: &str) -> Self {
-            *self.load_error.lock().expect("load error") = Some(message.to_string());
-            self
-        }
-
-        pub(crate) fn fail_save(self, message: &str) -> Self {
-            *self.save_error.lock().expect("save error") = Some(message.to_string());
-            self
-        }
-
-        pub(crate) fn fail_delete(self, message: &str) -> Self {
-            *self.delete_error.lock().expect("delete error") = Some(message.to_string());
-            self
-        }
-
-        pub(crate) fn contains_entry(&self, entry_name: &str) -> bool {
-            self.entries
-                .lock()
-                .expect("entries")
-                .contains_key(&entry_key(entry_name, default_target()))
-        }
-
-        pub(crate) fn contains_legacy_entry(&self, entry_name: &str) -> bool {
-            self.entries
-                .lock()
-                .expect("entries")
-                .contains_key(&entry_key(entry_name, None))
-        }
-    }
-
-    impl SecretBackend for MemoryBackend {
-        fn load(&self, entry_name: &str, target: Option<&str>) -> Result<Option<String>> {
-            if let Some(message) = self.load_error.lock().expect("load error").clone() {
-                bail!(message);
-            }
-
-            Ok(self
-                .entries
-                .lock()
-                .expect("entries")
-                .get(&entry_key(entry_name, target))
-                .cloned())
-        }
-
-        fn save(&self, entry_name: &str, target: Option<&str>, value: &str) -> Result<()> {
-            if let Some(message) = self.save_error.lock().expect("save error").clone() {
-                bail!(message);
-            }
-
-            self.entries
-                .lock()
-                .expect("entries")
-                .insert(entry_key(entry_name, target), value.to_string());
-            Ok(())
-        }
-
-        fn delete(&self, entry_name: &str, target: Option<&str>) -> Result<()> {
-            if let Some(message) = self.delete_error.lock().expect("delete error").clone() {
-                bail!(message);
-            }
-
-            self.entries
-                .lock()
-                .expect("entries")
-                .remove(&entry_key(entry_name, target));
-            Ok(())
-        }
-    }
-
-    fn default_target() -> Option<&'static str> {
-        #[cfg(target_os = "linux")]
-        {
-            Some(super::LINUX_COLLECTION)
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
-    }
-
-    fn entry_key(entry_name: &str, target: Option<&str>) -> String {
-        format!("{}::{entry_name}", target.unwrap_or("default"))
-    }
-}
-
-#[cfg(test)]
-pub(crate) use test_backend::{MemoryBackend, with_test_backend};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        env, fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     use serde::{Deserialize, Serialize};
 
     use super::{
-        CREDENTIALS_ENTRY, MemoryBackend, delete_secret, load_secret, save_secret,
-        troubleshooting_hint, with_test_backend,
+        CREDENTIALS_ENTRY, TOKENS_ENTRY, delete_secret, load_secret, save_secret,
+        troubleshooting_hint,
     };
+    use crate::config::paths::AppPaths;
 
     #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
     struct SampleSecret {
@@ -341,111 +139,105 @@ mod tests {
     }
 
     #[test]
-    fn secret_round_trip_uses_configured_backend() {
-        let backend = Arc::new(MemoryBackend::default());
+    fn secret_round_trip_uses_local_files() {
+        let (paths, root) = test_paths();
+        let sample = SampleSecret {
+            value: "secret-value".to_string(),
+        };
 
-        with_test_backend(backend.clone(), || {
-            let sample = SampleSecret {
-                value: "secret-value".to_string(),
-            };
+        save_secret(&paths, CREDENTIALS_ENTRY, "test secret", &sample).expect("save secret");
 
-            save_secret(CREDENTIALS_ENTRY, "test secret", &sample).expect("save secret");
+        let loaded = load_secret::<SampleSecret>(&paths, CREDENTIALS_ENTRY, "test secret")
+            .expect("load secret")
+            .expect("stored secret");
 
-            let loaded = load_secret::<SampleSecret>(CREDENTIALS_ENTRY, "test secret")
-                .expect("load secret")
-                .expect("stored secret");
-
-            assert_eq!(loaded, sample);
-        });
-
-        assert!(backend.contains_entry(CREDENTIALS_ENTRY));
-        #[cfg(target_os = "linux")]
-        assert!(!backend.contains_legacy_entry(CREDENTIALS_ENTRY));
+        assert_eq!(loaded, sample);
+        assert!(paths.credentials_file.exists());
+        cleanup(root);
     }
 
     #[test]
     fn delete_secret_removes_existing_value() {
-        let backend =
-            MemoryBackend::default().with_entry(CREDENTIALS_ENTRY, r#"{"value":"secret-value"}"#);
+        let (paths, root) = test_paths();
+        let sample = SampleSecret {
+            value: "secret-value".to_string(),
+        };
 
-        with_test_backend(Arc::new(backend), || {
-            delete_secret(CREDENTIALS_ENTRY, "test secret").expect("delete secret");
-            let loaded =
-                load_secret::<SampleSecret>(CREDENTIALS_ENTRY, "test secret").expect("load secret");
-            assert!(loaded.is_none());
-        });
+        save_secret(&paths, TOKENS_ENTRY, "test secret", &sample).expect("save secret");
+        delete_secret(&paths, TOKENS_ENTRY, "test secret").expect("delete secret");
+
+        let loaded =
+            load_secret::<SampleSecret>(&paths, TOKENS_ENTRY, "test secret").expect("load secret");
+        assert!(loaded.is_none());
+        cleanup(root);
     }
 
     #[test]
-    fn load_secret_surfaces_keyring_access_errors() {
-        let backend = MemoryBackend::default().fail_load("keyring locked");
+    fn load_secret_surfaces_local_storage_errors() {
+        let (paths, root) = test_paths();
+        fs::create_dir_all(&paths.config_dir).expect("create config dir");
+        fs::create_dir(&paths.credentials_file).expect("create conflicting directory");
 
-        with_test_backend(Arc::new(backend), || {
-            let error = load_secret::<SampleSecret>(CREDENTIALS_ENTRY, "test secret")
-                .expect_err("expected load failure");
-            assert!(error.to_string().contains("OS keyring"));
-            assert!(format!("{error:#}").contains("keyring locked"));
-        });
+        let error = load_secret::<SampleSecret>(&paths, CREDENTIALS_ENTRY, "test secret")
+            .expect_err("expected load failure");
+
+        assert!(error.to_string().contains("local storage"));
+        cleanup(root);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn troubleshooting_hint_detects_missing_secret_service() {
-        let hint = troubleshooting_hint("The name org.freedesktop.secrets was not provided")
-            .expect("linux hint");
+    fn troubleshooting_hint_detects_permission_errors() {
+        let hint = troubleshooting_hint("Permission denied (os error 13)").expect("hint");
 
-        assert!(hint.contains("gnome-keyring"));
+        assert!(hint.contains("writable"));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     #[test]
-    fn load_secret_falls_back_to_legacy_linux_entry() {
-        let backend = MemoryBackend::default()
-            .with_legacy_entry(CREDENTIALS_ENTRY, r#"{"value":"legacy-secret"}"#);
+    fn save_secret_uses_private_file_permissions() {
+        let (paths, root) = test_paths();
+        let sample = SampleSecret {
+            value: "secret-value".to_string(),
+        };
 
-        with_test_backend(Arc::new(backend), || {
-            let loaded = load_secret::<SampleSecret>(CREDENTIALS_ENTRY, "test secret")
-                .expect("load secret")
-                .expect("stored secret");
+        save_secret(&paths, CREDENTIALS_ENTRY, "test secret", &sample).expect("save secret");
 
-            assert_eq!(loaded.value, "legacy-secret");
-        });
+        let mode = fs::metadata(&paths.credentials_file)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+
+        cleanup(root);
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn save_secret_migrates_linux_legacy_entries_to_dedicated_collection() {
-        let backend = Arc::new(
-            MemoryBackend::default()
-                .with_legacy_entry(CREDENTIALS_ENTRY, r#"{"value":"legacy-secret"}"#),
-        );
+    fn test_paths() -> (AppPaths, PathBuf) {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-        with_test_backend(backend.clone(), || {
-            let sample = SampleSecret {
-                value: "new-secret".to_string(),
-            };
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = env::temp_dir().join(format!(
+            "soundcloud-tui-secure-store-test-{}-{unique}",
+            std::process::id()
+        ));
+        let config_dir = root.join("config");
+        let state_dir = root.join("state");
+        let cache_dir = root.join("cache");
+        let paths = AppPaths {
+            settings_file: config_dir.join("settings.toml"),
+            history_file: state_dir.join("history.json"),
+            log_file: state_dir.join("soundcloud-tui.log"),
+            credentials_file: config_dir.join("credentials.json"),
+            tokens_file: state_dir.join("tokens.json"),
+            config_dir,
+            state_dir,
+            cache_dir,
+        };
 
-            save_secret(CREDENTIALS_ENTRY, "test secret", &sample).expect("save secret");
-        });
-
-        assert!(backend.contains_entry(CREDENTIALS_ENTRY));
-        assert!(!backend.contains_legacy_entry(CREDENTIALS_ENTRY));
+        (paths, root)
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn delete_secret_clears_linux_dedicated_and_legacy_entries() {
-        let backend = Arc::new(
-            MemoryBackend::default()
-                .with_entry(CREDENTIALS_ENTRY, r#"{"value":"new-secret"}"#)
-                .with_legacy_entry(CREDENTIALS_ENTRY, r#"{"value":"legacy-secret"}"#),
-        );
-
-        with_test_backend(backend.clone(), || {
-            delete_secret(CREDENTIALS_ENTRY, "test secret").expect("delete secret");
-        });
-
-        assert!(!backend.contains_entry(CREDENTIALS_ENTRY));
-        assert!(!backend.contains_legacy_entry(CREDENTIALS_ENTRY));
+    fn cleanup(root: PathBuf) {
+        let _ = fs::remove_dir_all(root);
     }
 }

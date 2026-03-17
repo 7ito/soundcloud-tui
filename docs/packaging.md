@@ -26,7 +26,7 @@ Expected package notes:
 
 - Runtime dependency: `mpv`
 - Build dependencies: `cargo`, `rust`
-- The app stores credentials in the OS keyring; on Linux, a Secret Service provider such as `gnome-keyring` is recommended for runtime use
+- The app stores credentials and session tokens in user-owned local files
 
 ## Homebrew
 
@@ -57,4 +57,3 @@ Expected manifest notes:
 - `mpv` must be installed separately and available on `PATH`
 - Users need their own SoundCloud app credentials for OAuth
 - macOS visualizer support needs a loopback device such as BlackHole or Loopback
-- Linux keyring support expects Secret Service via D-Bus

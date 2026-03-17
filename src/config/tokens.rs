@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::config::secure_store;
+use crate::config::{paths::AppPaths, secure_store};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TokenStore {
@@ -13,8 +13,9 @@ pub struct TokenStore {
 }
 
 impl TokenStore {
-    pub fn load() -> Result<Option<Self>> {
+    pub fn load(paths: &AppPaths) -> Result<Option<Self>> {
         let Some(tokens) = secure_store::load_secret::<Self>(
+            paths,
             secure_store::TOKENS_ENTRY,
             "SoundCloud session tokens",
         )?
@@ -25,16 +26,21 @@ impl TokenStore {
         Ok(Some(tokens))
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&self, paths: &AppPaths) -> Result<()> {
         secure_store::save_secret(
+            paths,
             secure_store::TOKENS_ENTRY,
             "SoundCloud session tokens",
             self,
         )
     }
 
-    pub fn clear() -> Result<()> {
-        secure_store::delete_secret(secure_store::TOKENS_ENTRY, "SoundCloud session tokens")
+    pub fn clear(paths: &AppPaths) -> Result<()> {
+        secure_store::delete_secret(
+            paths,
+            secure_store::TOKENS_ENTRY,
+            "SoundCloud session tokens",
+        )
     }
 
     pub fn expires_soon(&self) -> bool {

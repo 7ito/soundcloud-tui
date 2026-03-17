@@ -112,7 +112,7 @@ async fn run() -> Result<()> {
 
     info!("starting soundcloud-tui auth onboarding scaffold");
 
-    let bootstrap = auth::bootstrap();
+    let bootstrap = auth::bootstrap(&paths);
 
     let mut terminal = TerminalHandle::new()?;
     let mut app = AppState::new_onboarding_with_persistence(

@@ -103,8 +103,8 @@ impl AppState {
                 .as_ref()
                 .is_some_and(|menu| menu.has_unsaved_changes(&self.settings)),
         });
-        self.status = "Confirm logout to clear the saved SoundCloud session from your OS keyring."
-            .to_string();
+        self.status =
+            "Confirm logout to clear the saved SoundCloud session from local storage.".to_string();
     }
 
     pub(super) fn dismiss_logout_confirm_modal(&mut self) {
@@ -118,7 +118,7 @@ impl AppState {
         }
 
         self.logout_confirm_modal = None;
-        self.set_loading("Clearing saved SoundCloud session from your OS keyring...");
+        self.set_loading("Clearing saved SoundCloud session from local storage...");
         self.status = "Logging out of SoundCloud...".to_string();
         self.queue_command(AppCommand::Logout);
     }
@@ -1257,12 +1257,11 @@ impl AppState {
                         Ok(request) => {
                             self.auth.clear_error();
                             self.auth.set_info(
-                                "Saving your SoundCloud app credentials securely in your OS keyring before opening the browser.",
+                                "Saving your SoundCloud app credentials locally before opening the browser.",
                             );
-                            self.set_loading("Saving SoundCloud credentials to your OS keyring...");
-                            self.status =
-                                "Saving your SoundCloud credentials to your OS keyring..."
-                                    .to_string();
+                            self.set_loading("Saving SoundCloud credentials to local storage...");
+                            self.status = "Saving your SoundCloud credentials to local storage..."
+                                .to_string();
                             self.queue_command(AppCommand::SaveCredentials(request));
                         }
                         Err(error) => {

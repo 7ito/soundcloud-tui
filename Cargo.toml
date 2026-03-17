@@ -1,6 +1,6 @@
 [package]
 name = "soundcloud-tui"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 description = "A SoundCloud client for the terminal written in Rust, powered by Ratatui, heavily inspired by spotatui (spotify-tui)."
 license = "MIT"
@@ -30,7 +30,6 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 realfft = "3.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 image = "0.25"
-keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 ratatui-image = { version = "10.0.6", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

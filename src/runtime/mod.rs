@@ -153,7 +153,7 @@ impl CommandExecutor {
     }
 
     fn save_credentials(&self, request: auth::AuthorizationRequest) {
-        let result = request.credentials.save();
+        let result = request.credentials.save(&self.paths);
         let _ = match result {
             Ok(()) => self.sender.send(AppEvent::CredentialsSaved(request)),
             Err(error) => self
@@ -186,8 +186,9 @@ impl CommandExecutor {
         credentials: crate::config::credentials::Credentials,
         tokens: crate::config::tokens::TokenStore,
     ) {
+        let paths = self.paths.clone();
         self.spawn_event_task(async move {
-            let result = auth::restore_saved_session(&credentials, &tokens)
+            let result = auth::restore_saved_session(&paths, &credentials, &tokens)
                 .await
                 .map_err(|error| format_error(&error));
             AppEvent::AuthRestoreComplete(result)
@@ -208,8 +209,9 @@ impl CommandExecutor {
         request: auth::AuthorizationRequest,
         callback_input: String,
     ) {
+        let paths = self.paths.clone();
         self.spawn_event_task(async move {
-            let result = auth::complete_authorization(&request, &callback_input)
+            let result = auth::complete_authorization(&paths, &request, &callback_input)
                 .await
                 .map_err(|error| format_error(&error));
             AppEvent::AuthCompleted(result)
@@ -217,7 +219,7 @@ impl CommandExecutor {
     }
 
     fn logout(&self) {
-        let result = crate::config::tokens::TokenStore::clear();
+        let result = crate::config::tokens::TokenStore::clear(&self.paths);
         let _ = match result {
             Ok(()) => self.sender.send(AppEvent::LogoutCompleted),
             Err(error) => self
@@ -654,9 +656,10 @@ impl CommandExecutor {
         E: FnOnce(anyhow::Error) -> AppEvent + Send + 'static,
     {
         let sender = self.sender.clone();
+        let paths = self.paths.clone();
         let service = self.service.clone();
         tokio::spawn(async move {
-            let event = match session::execute(service, session, run).await {
+            let event = match session::execute(paths, service, session, run).await {
                 Ok(event) => event,
                 Err(error) => on_error(error),
             };

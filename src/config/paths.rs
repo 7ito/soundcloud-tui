@@ -1,5 +1,8 @@
 use std::{fs, path::PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use anyhow::{Context, Result};
 
 #[derive(Debug, Clone)]
@@ -10,6 +13,8 @@ pub struct AppPaths {
     pub settings_file: PathBuf,
     pub history_file: PathBuf,
     pub log_file: PathBuf,
+    pub credentials_file: PathBuf,
+    pub tokens_file: PathBuf,
 }
 
 impl AppPaths {
@@ -29,6 +34,8 @@ impl AppPaths {
             settings_file: config_dir.join("settings.toml"),
             history_file: state_dir.join("history.json"),
             log_file: state_dir.join("soundcloud-tui.log"),
+            credentials_file: config_dir.join("credentials.json"),
+            tokens_file: state_dir.join("tokens.json"),
             config_dir,
             state_dir,
             cache_dir,
@@ -36,11 +43,20 @@ impl AppPaths {
     }
 
     pub fn ensure_dirs(&self) -> Result<()> {
-        fs::create_dir_all(&self.config_dir)?;
-        fs::create_dir_all(&self.state_dir)?;
-        fs::create_dir_all(&self.cache_dir)?;
+        ensure_app_dir(&self.config_dir)?;
+        ensure_app_dir(&self.state_dir)?;
+        ensure_app_dir(&self.cache_dir)?;
         Ok(())
     }
+}
+
+fn ensure_app_dir(path: &PathBuf) -> Result<()> {
+    fs::create_dir_all(path)?;
+
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+
+    Ok(())
 }
 
 fn resolve_state_base_dir(

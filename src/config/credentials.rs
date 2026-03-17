@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::secure_store;
+use crate::config::{paths::AppPaths, secure_store};
 
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:8974/callback";
 
@@ -23,8 +23,9 @@ impl Default for Credentials {
 }
 
 impl Credentials {
-    pub fn load_optional() -> Result<Option<Self>> {
+    pub fn load_optional(paths: &AppPaths) -> Result<Option<Self>> {
         let Some(credentials) = secure_store::load_secret::<Self>(
+            paths,
             secure_store::CREDENTIALS_ENTRY,
             "SoundCloud app credentials",
         )?
@@ -37,9 +38,10 @@ impl Credentials {
         Ok(Some(credentials))
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&self, paths: &AppPaths) -> Result<()> {
         self.validate()?;
         secure_store::save_secret(
+            paths,
             secure_store::CREDENTIALS_ENTRY,
             "SoundCloud app credentials",
             self,
