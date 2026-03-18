@@ -23,7 +23,7 @@ cpal = "0.16"
 crossterm = { version = "0.29", features = ["bracketed-paste"] }
 dirs = "6.0"
 fern = "0.7"
-ffmpeg = { package = "ffmpeg-the-third", version = "4.1.0", default-features = false, features = ["codec", "format", "software-resampling"] }
+ffmpeg = { package = "ffmpeg-the-third", version = "4.1.0", default-features = false, features = ["codec", "format", "non-exhaustive-enums", "software-resampling"] }
 log = "0.4"
 open = "5.3"
 rand = "0.8"
