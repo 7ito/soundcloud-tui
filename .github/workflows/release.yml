@@ -43,7 +43,10 @@ jobs:
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
-        run: brew update && brew install ffmpeg
+        run: |
+          brew update
+          brew install ffmpeg pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Install Windows FFmpeg dependencies
         if: runner.os == 'Windows'

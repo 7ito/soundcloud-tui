@@ -527,6 +527,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "clang"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84c044c781163c001b913cd018fc95a628c50d0d2dfea8bca77dad71edb16e37"
+dependencies = [
+ "clang-sys",
+ "libc",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,28 +1129,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "ffmpeg-next"
-version = "8.0.0"
+name = "ffmpeg-sys-the-third"
+version = "4.1.0+ffmpeg-8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d658424d233cbd993a972dd73a66ca733acd12a494c68995c9ac32ae1fe65b40"
-dependencies = [
- "bitflags 2.11.0",
- "ffmpeg-sys-next",
- "libc",
-]
-
-[[package]]
-name = "ffmpeg-sys-next"
-version = "8.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bca20aa4ee774fe384c2490096c122b0b23cf524a9910add0686691003d797b"
+checksum = "e0c1bf5e362dfb2fbdf9b3e634f3d7f7f0f057103689f518ba4fd96813faf1ef"
 dependencies = [
  "bindgen",
  "cc",
+ "clang",
  "libc",
- "num_cpus",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "ffmpeg-the-third"
+version = "4.1.0+ffmpeg-8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71a274244c87178cd01144536061d63114cecea74cb1037a3614c81cc7ca01e0"
+dependencies = [
+ "bitflags 2.11.0",
+ "ffmpeg-sys-the-third",
+ "libc",
 ]
 
 [[package]]
@@ -2175,16 +2185,6 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
-]
-
-[[package]]
-name = "num_cpus"
-version = "1.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
-dependencies = [
- "hermit-abi",
- "libc",
 ]
 
 [[package]]
@@ -3385,7 +3385,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "fern",
- "ffmpeg-next",
+ "ffmpeg-the-third",
  "image",
  "log",
  "mpris-server",

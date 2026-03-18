@@ -13,7 +13,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     FromSample, SampleFormat, SizedSample, Stream, StreamConfig, SupportedStreamConfig,
 };
-use ffmpeg_next as ffmpeg;
 use log::{debug, info, warn};
 
 use crate::{
@@ -336,7 +335,7 @@ impl PlaybackSession {
 
         let input_layout = decoder_channel_layout(&decoder);
         let output_layout = output_channel_layout(output_channels);
-        let resampler = ffmpeg::software::resampling::Context::get(
+        let resampler = ffmpeg::software::resampling::Context::get2(
             decoder.format(),
             input_layout,
             decoder.rate(),
@@ -350,7 +349,7 @@ impl PlaybackSession {
             "opened native stream: title={}, sample_rate={}Hz, channels={}, duration={:?}",
             request.title,
             decoder.rate(),
-            decoder.channels(),
+            decoder_channel_layout(&decoder).channels(),
             stream_duration_seconds
         );
 
@@ -375,7 +374,7 @@ impl PlaybackSession {
     ) -> Result<()> {
         while buffer_len(shared)? < target_samples && !self.finished {
             match self.input.packets().next() {
-                Some((stream, packet)) => {
+                Some(Ok((stream, packet))) => {
                     if stream.index() != self.stream_index {
                         continue;
                     }
@@ -398,6 +397,10 @@ impl PlaybackSession {
                     if !self.receive_frames(shared)? {
                         self.finished = true;
                     }
+                }
+                Some(Err(error)) => {
+                    return Err(error)
+                        .with_context(|| format!("could not read packets for {}", self.title));
                 }
             }
         }
@@ -443,7 +446,12 @@ impl PlaybackSession {
         shared: &Arc<Mutex<OutputState>>,
     ) -> Result<()> {
         let bytes = frame.data(0);
-        let (_, samples, _) = unsafe { bytes.align_to::<f32>() };
+        let samples: &[f32] = unsafe {
+            std::slice::from_raw_parts(
+                bytes.as_ptr().cast::<f32>(),
+                bytes.len() / std::mem::size_of::<f32>(),
+            )
+        };
         let sample_count = frame.samples() * self.output_channels;
 
         if sample_count == 0 || samples.is_empty() {
@@ -654,20 +662,22 @@ fn init_ffmpeg() -> Result<()> {
     Ok(())
 }
 
-fn decoder_channel_layout(decoder: &ffmpeg::decoder::Audio) -> ffmpeg::ChannelLayout {
-    let layout = decoder.channel_layout();
-    if layout.channels() > 0 {
-        layout
+fn decoder_channel_layout(decoder: &ffmpeg::decoder::Audio) -> ffmpeg::ChannelLayout<'static> {
+    let layout = decoder.ch_layout();
+
+    if let Some(mask) = layout.mask() {
+        ffmpeg::ChannelLayout::from_mask(mask)
+            .unwrap_or_else(|| ffmpeg::ChannelLayout::default_for_channels(layout.channels()))
     } else {
-        output_channel_layout(decoder.channels() as usize)
+        ffmpeg::ChannelLayout::default_for_channels(layout.channels())
     }
 }
 
-fn output_channel_layout(channels: usize) -> ffmpeg::ChannelLayout {
+fn output_channel_layout(channels: usize) -> ffmpeg::ChannelLayout<'static> {
     match channels {
         1 => ffmpeg::ChannelLayout::MONO,
         2 => ffmpeg::ChannelLayout::STEREO,
-        _ => ffmpeg::ChannelLayout::default(channels as i32),
+        _ => ffmpeg::ChannelLayout::default_for_channels(channels as u32),
     }
 }
 
