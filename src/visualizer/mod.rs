@@ -1,11 +1,10 @@
 pub mod analyzer;
-pub mod cpal_capture;
-#[cfg(target_os = "linux")]
-pub mod pipewire_capture;
 pub mod runtime;
+pub mod tap;
 
 pub use analyzer::{SpectrumFrame, VISUALIZER_BANDS, VisualizerAnalyzer};
 pub use runtime::{VisualizerCommand, VisualizerHandle};
+pub use tap::VisualizerTap;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VisualizerStyle {

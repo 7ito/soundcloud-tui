@@ -9,11 +9,8 @@ use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::{
     app::AppEvent,
-    visualizer::{SpectrumFrame, cpal_capture::CpalCapture},
+    visualizer::{SpectrumFrame, VisualizerTap},
 };
-
-#[cfg(target_os = "linux")]
-use crate::visualizer::pipewire_capture::PipeWireCapture;
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
@@ -30,36 +27,19 @@ pub struct VisualizerHandle {
 }
 
 impl VisualizerHandle {
-    pub fn spawn(app_events: tokio_mpsc::UnboundedSender<AppEvent>) -> Self {
+    pub fn spawn(app_events: tokio_mpsc::UnboundedSender<AppEvent>, tap: VisualizerTap) -> Self {
         let (command_tx, command_rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut capture: Option<CaptureBackend> = None;
             let mut emitting = false;
 
             loop {
                 match command_rx.recv_timeout(FRAME_INTERVAL) {
                     Ok(VisualizerCommand::Start) => {
-                        if capture.is_some() {
-                            emitting = true;
-                            continue;
-                        }
-
-                        match open_capture_backend() {
-                            Ok(new_capture) => {
-                                let _ =
-                                    app_events.send(AppEvent::VisualizerCaptureStarted(format!(
-                                        "Visualizer capture ready on {}.",
-                                        new_capture.device_name()
-                                    )));
-                                emitting = true;
-                                capture = Some(new_capture);
-                            }
-                            Err(error) => {
-                                emitting = false;
-                                let _ = app_events.send(AppEvent::VisualizerCaptureFailed(error));
-                            }
-                        }
+                        emitting = true;
+                        let _ = app_events.send(AppEvent::VisualizerCaptureStarted(
+                            "Visualizer synced to playback stream.".to_string(),
+                        ));
                     }
                     Ok(VisualizerCommand::Stop) => {
                         emitting = false;
@@ -69,29 +49,17 @@ impl VisualizerHandle {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
 
-                let Some(active_capture) = capture.as_ref() else {
-                    continue;
-                };
                 if !emitting {
                     continue;
                 }
 
-                if !active_capture.is_active() {
-                    if let Some(error) = active_capture.take_error() {
-                        let _ = app_events.send(AppEvent::VisualizerCaptureFailed(error));
-                    }
-                    emitting = false;
-                    capture = None;
-                    continue;
-                }
-
-                match active_capture.frame() {
+                match tap.current_frame() {
                     Ok(frame) => {
                         let _ = app_events.send(AppEvent::VisualizerFrame(frame));
                     }
                     Err(error) => {
+                        emitting = false;
                         let _ = app_events.send(AppEvent::VisualizerCaptureFailed(error));
-                        capture = None;
                     }
                 }
             }
@@ -106,64 +74,7 @@ impl VisualizerHandle {
     }
 }
 
-enum CaptureBackend {
-    Cpal(CpalCapture),
-    #[cfg(target_os = "linux")]
-    PipeWire(PipeWireCapture),
-}
-
-impl CaptureBackend {
-    fn frame(&self) -> Result<SpectrumFrame, String> {
-        match self {
-            Self::Cpal(capture) => capture.frame(),
-            #[cfg(target_os = "linux")]
-            Self::PipeWire(capture) => capture.frame(),
-        }
-    }
-
-    fn device_name(&self) -> &str {
-        match self {
-            Self::Cpal(capture) => capture.device_name(),
-            #[cfg(target_os = "linux")]
-            Self::PipeWire(capture) => capture.device_name(),
-        }
-    }
-
-    fn is_active(&self) -> bool {
-        match self {
-            Self::Cpal(capture) => capture.is_active(),
-            #[cfg(target_os = "linux")]
-            Self::PipeWire(capture) => capture.is_active(),
-        }
-    }
-
-    fn take_error(&self) -> Option<String> {
-        match self {
-            Self::Cpal(capture) => capture.take_error(),
-            #[cfg(target_os = "linux")]
-            Self::PipeWire(capture) => capture.take_error(),
-        }
-    }
-}
-
-fn open_capture_backend() -> Result<CaptureBackend, String> {
-    #[cfg(target_os = "linux")]
-    {
-        match PipeWireCapture::open() {
-            Ok(capture) => return Ok(CaptureBackend::PipeWire(capture)),
-            Err(pipewire_error) => match CpalCapture::open() {
-                Ok(capture) => return Ok(CaptureBackend::Cpal(capture)),
-                Err(cpal_error) => {
-                    return Err(format!(
-                        "PipeWire capture failed: {pipewire_error}. CPAL fallback failed: {cpal_error}"
-                    ));
-                }
-            },
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        CpalCapture::open().map(CaptureBackend::Cpal)
-    }
+#[allow(dead_code)]
+fn _default_frame() -> SpectrumFrame {
+    SpectrumFrame::default()
 }

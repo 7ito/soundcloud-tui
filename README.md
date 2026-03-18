@@ -10,7 +10,7 @@ This project is still very early. Expect rough edges, missing features, and brea
 
 - Search for tracks, users, and playlists
 - Browse your feed, likes, and playlists
-- Play audio through `mpv`
+- Play audio with bundled native streaming
 - Manage a queue and add tracks to playlists or liked songs
 - Use a fullscreen visualizer and customize settings and keybindings
 
@@ -18,16 +18,15 @@ This project is still very early. Expect rough edges, missing features, and brea
 
 - An interactive terminal
 - Rust if you are building from source
-- `mpv` (installed and available on `PATH` for Windows users)
+- FFmpeg development libraries if you are building from source
 - Your own SoundCloud app credentials for OAuth
 
 Credentials and session tokens are stored locally for the current user.
 
 Visualizer notes:
 
-- Linux needs a monitor-style input exposed by PipeWire or PulseAudio
-- macOS needs a loopback device such as BlackHole or Loopback
-- Windows uses WASAPI loopback on the default output device
+- Linux and Windows analyze the decoded playback stream directly
+- macOS playback is still present in releases, but native streaming has only been validated on Linux and Windows so far
 
 ## Installation
 
@@ -45,23 +44,17 @@ or:
 paru -S soundcloud-tui
 ```
 
-You still need `mpv` installed separately:
+The AUR package links against system FFmpeg libraries at build and runtime:
 
 ```bash
-sudo pacman -S mpv
+sudo pacman -S ffmpeg
 ```
 
 ### Windows
 
 Download the Windows release zip from [GitHub Releases](https://github.com/7ito/soundcloud-tui/releases), then extract it.
 
-`mpv` is required. Download it, move the extracted folder to something like `C:\Program Files\mpv`, then add `C:\Program Files\mpv` to your `User` `PATH` environment variable. 
-
-After updating `PATH`, open a new terminal and confirm `mpv` is available:
-
-```powershell
-mpv --version
-```
+Windows release archives bundle the native FFmpeg DLLs needed for playback.
 
 Then run `soundcloud-tui` from the extracted release directory:
 
@@ -73,13 +66,13 @@ Then run `soundcloud-tui` from the extracted release directory:
 
 An Apple Silicon macOS binary is available on [GitHub Releases](https://github.com/7ito/soundcloud-tui/releases), but it has not been tested yet.
 
-`mpv` is still a hard requirement:
+macOS native playback is still behind Linux and Windows in testing coverage. If you build from source, you will also need FFmpeg development libraries installed:
 
 ```bash
-brew install mpv
+brew install ffmpeg
 ```
 
-For visualizer support on macOS, you also need a loopback device such as BlackHole or Loopback.
+The visualizer now reads directly from the playback stream instead of requiring loopback capture.
 
 ### From source
 
@@ -90,6 +83,8 @@ git clone https://github.com/7ito/soundcloud-tui.git
 cd soundcloud-tui
 cargo run --release
 ```
+
+Native playback currently depends on FFmpeg development libraries when building from source. On Debian or Ubuntu, install `libavcodec-dev`, `libavformat-dev`, `libavutil-dev`, and `libswresample-dev` before building.
 
 On first launch, the app walks you through entering your SoundCloud app credentials and authorizing in your browser.
 

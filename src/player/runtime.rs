@@ -14,8 +14,10 @@ use crate::{
     app::AppEvent,
     config::paths::AppPaths,
     player::{
-        backend::PlayerBackend, command::PlayerCommand, event::PlayerEvent, mpv::MpvPlayerBackend,
+        backend::PlayerBackend, command::PlayerCommand, event::PlayerEvent,
+        native::NativePlayerBackend,
     },
+    visualizer::VisualizerTap,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -27,11 +29,15 @@ pub struct PlayerHandle {
 }
 
 impl PlayerHandle {
-    pub fn spawn(paths: AppPaths, app_events: tokio_mpsc::UnboundedSender<AppEvent>) -> Self {
+    pub fn spawn(
+        paths: AppPaths,
+        app_events: tokio_mpsc::UnboundedSender<AppEvent>,
+        visualizer_tap: VisualizerTap,
+    ) -> Self {
         let (command_tx, command_rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut backend: Option<MpvPlayerBackend> = None;
+            let mut backend: Option<NativePlayerBackend> = None;
 
             loop {
                 match command_rx.recv_timeout(POLL_INTERVAL) {
@@ -40,7 +46,7 @@ impl PlayerHandle {
                             break;
                         }
 
-                        if let Err(error) = ensure_backend(&paths, &mut backend)
+                        if let Err(error) = ensure_backend(&paths, &visualizer_tap, &mut backend)
                             .and_then(|backend| backend.send(command))
                         {
                             backend = None;
@@ -100,10 +106,11 @@ impl PlayerHandle {
 
 fn ensure_backend<'a>(
     paths: &AppPaths,
-    backend: &'a mut Option<MpvPlayerBackend>,
-) -> Result<&'a mut MpvPlayerBackend> {
+    visualizer_tap: &VisualizerTap,
+    backend: &'a mut Option<NativePlayerBackend>,
+) -> Result<&'a mut NativePlayerBackend> {
     if backend.is_none() {
-        *backend = Some(MpvPlayerBackend::spawn(paths)?);
+        *backend = Some(NativePlayerBackend::spawn(paths, visualizer_tap.clone())?);
     }
 
     Ok(backend.as_mut().expect("backend initialized"))

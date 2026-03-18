@@ -270,22 +270,22 @@ fn rgb_triplet(color: Color) -> (u8, u8, u8) {
 fn platform_hint() -> &'static str {
     #[cfg(target_os = "linux")]
     {
-        "Linux needs a monitor-style input exposed by PipeWire or PulseAudio."
+        "Linux analyzes the decoded playback stream directly."
     }
 
     #[cfg(target_os = "windows")]
     {
-        "Windows uses WASAPI loopback on the default output device."
+        "Windows analyzes the decoded playback stream directly."
     }
 
     #[cfg(target_os = "macos")]
     {
-        "macOS needs a loopback device such as BlackHole or Loopback."
+        "macOS playback is still experimental and may need extra work."
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
-        "This platform may require a manual loopback capture device."
+        "This visualizer follows the app's decoded playback stream."
     }
 }
 

@@ -613,6 +613,7 @@ impl CommandExecutor {
                     url: stream.url,
                     title: track.title.clone(),
                     authorization: Some(session.tokens.access_token.clone()),
+                    duration_seconds: track.duration_ms.map(|duration| duration as f64 / 1000.0),
                 })?;
                 Ok(AppEvent::PlaybackQueued {
                     session,

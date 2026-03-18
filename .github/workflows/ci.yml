@@ -34,7 +34,20 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libpipewire-0.3-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libdbus-1-dev libswresample-dev pkg-config
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew update && brew install ffmpeg
+
+      - name: Install Windows FFmpeg dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP/vcpkg"
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP/vcpkg/vcpkg.exe" install ffmpeg:x64-windows
+          "VCPKG_ROOT=$env:RUNNER_TEMP/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Cargo command
         run: ${{ matrix.command }}

@@ -4,6 +4,7 @@ pub enum PlayerCommand {
         url: String,
         title: String,
         authorization: Option<String>,
+        duration_seconds: Option<f64>,
     },
     Play,
     Pause,

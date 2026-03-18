@@ -7,7 +7,7 @@ This project is being prepared for distribution through AUR, Homebrew, and WinGe
 - Tag releases as `vX.Y.Z`
 - Pushing a version tag triggers `.github/workflows/release.yml`
 - The workflow builds release archives for Linux, Apple Silicon macOS, and Windows
-- Each archive includes the binary, `README.md`, and `LICENSE`
+- Linux and Windows release archives should include the binary, the native FFmpeg runtime libraries required for playback, `README.md`, and `LICENSE`
 - A `SHA256SUMS` file is attached to the GitHub release for packagers
 
 The generated asset names follow this pattern:
@@ -24,7 +24,7 @@ Recommended first package:
 
 Expected package notes:
 
-- Runtime dependency: `mpv`
+- Runtime dependency: `ffmpeg`
 - Build dependencies: `cargo`, `rust`
 - The app stores credentials and session tokens in user-owned local files
 
@@ -37,7 +37,7 @@ Recommended first package:
 Expected formula notes:
 
 - `depends_on "rust" => :build`
-- `depends_on "mpv"`
+- `depends_on "ffmpeg"`
 - Use `soundcloud-tui --version` as the formula test command
 
 ## WinGet
@@ -50,10 +50,11 @@ Expected manifest notes:
 
 - Command alias: `soundcloud-tui`
 - Installer type: `portable`
-- The package should document `mpv` as a separate prerequisite until a suitable WinGet dependency path is chosen
+- The release archive should ship the FFmpeg DLLs beside `soundcloud-tui.exe`
 
 ## Runtime caveats
 
-- `mpv` must be installed separately and available on `PATH`
+- Release archives for Linux and Windows should bundle the FFmpeg runtime used by native playback
+- Source and distro builds should link against system FFmpeg libraries
 - Users need their own SoundCloud app credentials for OAuth
-- macOS visualizer support needs a loopback device such as BlackHole or Loopback
+- The visualizer reads directly from the decoded playback stream

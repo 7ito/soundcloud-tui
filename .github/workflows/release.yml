@@ -39,7 +39,20 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libpipewire-0.3-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libavcodec-dev libavformat-dev libavutil-dev libdbus-1-dev libswresample-dev patchelf pkg-config
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew update && brew install ffmpeg
+
+      - name: Install Windows FFmpeg dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP/vcpkg"
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP/vcpkg/vcpkg.exe" install ffmpeg:x64-windows
+          "VCPKG_ROOT=$env:RUNNER_TEMP/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build release binary
         run: cargo build --release --locked
@@ -51,6 +64,10 @@ jobs:
           asset_basename="${BINARY_NAME}-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "$asset_basename"
           cp "target/release/${BINARY_NAME}" "$asset_basename/"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            ldd "target/release/${BINARY_NAME}" | python3 -c "import os,re,shutil,sys; out=sys.argv[1]; pattern=re.compile(r'=>\\s+(\\S+)'); [shutil.copy2(match.group(1), os.path.join(out, os.path.basename(match.group(1)))) for line in sys.stdin for match in [pattern.search(line)] if match and os.path.basename(match.group(1)).startswith(('libav', 'libsw', 'libpostproc'))]" "$asset_basename"
+            patchelf --set-rpath '$ORIGIN' "$asset_basename/${BINARY_NAME}"
+          fi
           cp README.md LICENSE "$asset_basename/"
           tar -czf "${asset_basename}.tar.gz" "$asset_basename"
 
@@ -61,6 +78,7 @@ jobs:
           $assetBasename = "$env:BINARY_NAME-$env:GITHUB_REF_NAME-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $assetBasename | Out-Null
           Copy-Item "target/release/$env:BINARY_NAME.exe" "$assetBasename/"
+          Copy-Item "$env:VCPKG_ROOT/installed/x64-windows/bin/*.dll" "$assetBasename/"
           Copy-Item README.md, LICENSE "$assetBasename/"
           Compress-Archive -Path $assetBasename -DestinationPath "$assetBasename.zip"
 

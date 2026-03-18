@@ -408,12 +408,7 @@ impl AppState {
             }
             PlayerEvent::BackendError(error) => {
                 self.player.status = PlaybackStatus::Stopped;
-                let title = if crate::player::mpv_locator::is_missing_error_message(&error) {
-                    "mpv is not installed"
-                } else {
-                    "Playback backend error"
-                };
-                self.show_main_error(title, error);
+                self.show_main_error("Playback backend error", error);
             }
         }
     }
@@ -705,7 +700,7 @@ impl AppState {
         self.visualizer.visible = true;
         self.visualizer.capture_active = false;
         self.visualizer.spectrum = SpectrumFrame::default();
-        self.visualizer.status = "Starting system audio capture...".to_string();
+        self.visualizer.status = "Syncing visualizer to playback...".to_string();
         self.status = format!(
             "Opened visualizer in {} mode.",
             self.visualizer.style.label()

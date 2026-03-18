@@ -253,7 +253,7 @@ impl Default for VisualizerState {
             style: VisualizerStyle::default(),
             capture_active: false,
             spectrum: SpectrumFrame::default(),
-            status: "Press v to start system audio capture.".to_string(),
+            status: "Press v to analyze the playback stream.".to_string(),
         }
     }
 }

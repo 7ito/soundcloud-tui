@@ -20,7 +20,7 @@ use soundcloud_tui::{
     runtime::CommandExecutor,
     soundcloud::auth,
     ui::{self, cover_art::CoverArtRenderer},
-    visualizer::VisualizerHandle,
+    visualizer::{VisualizerHandle, VisualizerTap},
 };
 use tokio::{sync::mpsc, task::LocalSet};
 
@@ -140,8 +140,9 @@ async fn run() -> Result<()> {
 
     let mut events = EventHandler::new(Duration::from_millis(tick_rate_ms));
     let (async_tx, mut async_rx) = mpsc::unbounded_channel::<AppEvent>();
-    let player = PlayerHandle::spawn(paths.clone(), async_tx.clone());
-    let visualizer = VisualizerHandle::spawn(async_tx.clone());
+    let visualizer_tap = VisualizerTap::default();
+    let player = PlayerHandle::spawn(paths.clone(), async_tx.clone(), visualizer_tap.clone());
+    let visualizer = VisualizerHandle::spawn(async_tx.clone(), visualizer_tap);
     let executor = CommandExecutor::new(
         paths.clone(),
         async_tx.clone(),
