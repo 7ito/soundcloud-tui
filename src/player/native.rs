@@ -105,8 +105,9 @@ impl OutputStreamContext {
             .default_output_device()
             .ok_or_else(|| anyhow!("no default audio output device is available"))?;
 
-        let supported =
-            preferred_output_config(&device).or_else(|_| device.default_output_config())?;
+        let supported = device
+            .default_output_config()
+            .or_else(|_| preferred_output_config(&device))?;
         let config = supported.config();
         let channels = config.channels as usize;
         let sample_rate = config.sample_rate.0;
@@ -288,7 +289,9 @@ struct PlaybackSession {
     stream_index: usize,
     decoder: ffmpeg::decoder::Audio,
     resampler: ffmpeg::software::resampling::Context,
+    output_rate: u32,
     output_channels: usize,
+    output_layout_mask: ffmpeg::ChannelLayoutMask,
     duration_seconds: Option<f64>,
     started_pending: bool,
     draining: bool,
@@ -333,17 +336,12 @@ impl PlaybackSession {
             .context("could not create audio decoder")?;
         decoder.set_parameters(stream.parameters())?;
 
-        let input_layout = decoder_channel_layout(&decoder);
         let output_layout = output_channel_layout(output_channels);
-        let resampler = ffmpeg::software::resampling::Context::get2(
-            decoder.format(),
-            input_layout,
-            decoder.rate(),
-            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
-            output_layout,
-            output_rate,
-        )
-        .context("could not create audio resampler")?;
+        let output_layout_mask = output_layout
+            .mask()
+            .ok_or_else(|| anyhow!("could not determine output channel layout mask"))?;
+        let resampler = create_resampler(&decoder, output_rate, output_channels)
+            .context("could not create audio resampler")?;
 
         info!(
             "opened native stream: title={}, sample_rate={}Hz, channels={}, duration={:?}",
@@ -359,7 +357,9 @@ impl PlaybackSession {
             stream_index,
             decoder,
             resampler,
+            output_rate,
             output_channels,
+            output_layout_mask,
             duration_seconds: stream_duration_seconds,
             started_pending: true,
             draining: false,
@@ -385,17 +385,23 @@ impl PlaybackSession {
                     self.receive_frames(shared)?;
                 }
                 None => {
-                    if self.draining {
-                        self.finished = true;
-                        break;
+                    if !self.draining {
+                        self.decoder
+                            .send_eof()
+                            .with_context(|| format!("could not drain decoder for {}", self.title))?;
+                        self.draining = true;
                     }
 
-                    self.decoder
-                        .send_eof()
-                        .with_context(|| format!("could not drain decoder for {}", self.title))?;
-                    self.draining = true;
-                    if !self.receive_frames(shared)? {
+                    let decoded_any = self.receive_frames(shared)?;
+                    let flushed_any = if decoded_any {
+                        false
+                    } else {
+                        self.flush_resampler(shared)?
+                    };
+
+                    if !decoded_any && !flushed_any {
                         self.finished = true;
+                        break;
                     }
                 }
                 Some(Err(error)) => {
@@ -414,6 +420,8 @@ impl PlaybackSession {
             .seek(timestamp, ..timestamp)
             .with_context(|| format!("could not seek {}", self.title))?;
         self.decoder.flush();
+        self.resampler = create_resampler(&self.decoder, self.output_rate, self.output_channels)
+            .with_context(|| format!("could not reset audio resampler for {}", self.title))?;
         self.draining = false;
         self.finished = false;
 
@@ -429,15 +437,70 @@ impl PlaybackSession {
         let mut decoded = ffmpeg::frame::Audio::empty();
 
         while self.decoder.receive_frame(&mut decoded).is_ok() {
-            let mut converted = ffmpeg::frame::Audio::empty();
+            let output_samples = self.resampler_output_samples(decoded.samples())?;
+            if output_samples == 0 {
+                continue;
+            }
+
+            let mut converted = self.allocate_output_frame(output_samples);
             self.resampler
                 .run(&decoded, &mut converted)
                 .with_context(|| format!("could not resample {}", self.title))?;
             self.push_converted_samples(&converted, shared)?;
-            pushed_any = true;
+            pushed_any |= converted.samples() > 0;
         }
 
         Ok(pushed_any)
+    }
+
+    fn flush_resampler(&mut self, shared: &Arc<Mutex<OutputState>>) -> Result<bool> {
+        let mut pushed_any = false;
+
+        loop {
+            let output_samples = self.resampler_output_samples(0)?;
+            if output_samples == 0 {
+                break;
+            }
+
+            let mut converted = self.allocate_output_frame(output_samples);
+            let delay = self
+                .resampler
+                .flush(&mut converted)
+                .with_context(|| format!("could not flush audio resampler for {}", self.title))?;
+            let produced_samples = converted.samples();
+            self.push_converted_samples(&converted, shared)?;
+            pushed_any |= produced_samples > 0;
+
+            if delay.is_none() || produced_samples == 0 {
+                break;
+            }
+        }
+
+        Ok(pushed_any)
+    }
+
+    fn allocate_output_frame(&self, output_samples: usize) -> ffmpeg::frame::Audio {
+        let mut frame = ffmpeg::frame::Audio::empty();
+        unsafe {
+            frame.alloc(
+                ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+                output_samples,
+                self.output_layout_mask,
+            );
+        }
+        frame
+    }
+
+    fn resampler_output_samples(&mut self, input_samples: usize) -> Result<usize> {
+        let output_samples = unsafe {
+            ffmpeg::ffi::swr_get_out_samples(self.resampler.as_mut_ptr(), input_samples as i32)
+        };
+
+        if output_samples < 0 {
+            return Err(ffmpeg::Error::from(output_samples).into());
+        }
+
+        Ok(output_samples as usize)
     }
 
     fn push_converted_samples(
@@ -681,6 +744,22 @@ fn output_channel_layout(channels: usize) -> ffmpeg::ChannelLayout<'static> {
     }
 }
 
+fn create_resampler(
+    decoder: &ffmpeg::decoder::Audio,
+    output_rate: u32,
+    output_channels: usize,
+) -> Result<ffmpeg::software::resampling::Context> {
+    ffmpeg::software::resampling::Context::get2(
+        decoder.format(),
+        decoder_channel_layout(decoder),
+        decoder.rate(),
+        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+        output_channel_layout(output_channels),
+        output_rate,
+    )
+    .map_err(Into::into)
+}
+
 fn clear_output(shared: &Arc<Mutex<OutputState>>, seconds: f64) -> Result<()> {
     let mut state = shared
         .lock()
@@ -733,5 +812,110 @@ fn command_label(command: &PlayerCommand) -> &'static str {
         PlayerCommand::SeekAbsolute { .. } => "seek_absolute",
         PlayerCommand::SetVolume { .. } => "set_volume",
         PlayerCommand::Shutdown => "shutdown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    static FFMPEG_INIT: Once = Once::new();
+
+    fn init_ffmpeg_for_tests() {
+        FFMPEG_INIT.call_once(|| {
+            ffmpeg::init().expect("ffmpeg should initialize for tests");
+        });
+    }
+
+    fn stereo_f32_frame(sample_rate: u32, samples: usize) -> ffmpeg::frame::Audio {
+        let mut frame = ffmpeg::frame::Audio::empty();
+        frame.set_rate(sample_rate);
+        unsafe {
+            frame.alloc(
+                ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+                samples,
+                ffmpeg::ChannelLayout::STEREO
+                    .mask()
+                    .expect("stereo layout should expose a mask"),
+            );
+        }
+        frame
+    }
+
+    #[test]
+    fn resampler_preallocation_and_flush_preserve_duration_when_upsampling() {
+        init_ffmpeg_for_tests();
+
+        let input_rate = 44_100;
+        let output_rate = 48_000;
+        let mut resampler = ffmpeg::software::resampling::Context::get2(
+            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+            ffmpeg::ChannelLayout::STEREO,
+            input_rate,
+            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+            ffmpeg::ChannelLayout::STEREO,
+            output_rate,
+        )
+        .expect("resampler should be created");
+
+        let output_layout_mask = ffmpeg::ChannelLayout::STEREO
+            .mask()
+            .expect("stereo layout should expose a mask");
+        let mut total_input_samples = 0usize;
+        let mut total_output_samples = 0usize;
+
+        for _ in 0..1_000 {
+            let input = stereo_f32_frame(input_rate, 1024);
+            let output_samples = unsafe {
+                ffmpeg::ffi::swr_get_out_samples(resampler.as_mut_ptr(), input.samples() as i32)
+            };
+            assert!(output_samples > 0, "resampler should report output capacity");
+
+            let mut output = ffmpeg::frame::Audio::empty();
+            unsafe {
+                output.alloc(
+                    ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+                    output_samples as usize,
+                    output_layout_mask,
+                );
+            }
+            resampler
+                .run(&input, &mut output)
+                .expect("resampling should succeed");
+            total_input_samples += input.samples();
+            total_output_samples += output.samples();
+        }
+
+        loop {
+            let output_samples = unsafe { ffmpeg::ffi::swr_get_out_samples(resampler.as_mut_ptr(), 0) };
+            if output_samples <= 0 {
+                break;
+            }
+
+            let mut output = ffmpeg::frame::Audio::empty();
+            unsafe {
+                output.alloc(
+                    ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+                    output_samples as usize,
+                    output_layout_mask,
+                );
+            }
+            let delay = resampler
+                .flush(&mut output)
+                .expect("resampler flush should succeed");
+            let produced_samples = output.samples();
+            total_output_samples += produced_samples;
+
+            if delay.is_none() || produced_samples == 0 {
+                break;
+            }
+        }
+
+        let input_seconds = total_input_samples as f64 / input_rate as f64;
+        let output_seconds = total_output_samples as f64 / output_rate as f64;
+        assert!(
+            (output_seconds - input_seconds).abs() < 0.01,
+            "expected resampled duration to match input duration, input={input_seconds}, output={output_seconds}",
+        );
     }
 }
