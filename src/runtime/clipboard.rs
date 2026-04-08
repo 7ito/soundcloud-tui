@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 use std::{
     io::Write,
     process::{Command, Stdio},

@@ -1,5 +1,6 @@
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 use crate::{config::credentials::Credentials, soundcloud::auth::AuthorizationRequest};

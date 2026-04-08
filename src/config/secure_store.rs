@@ -1,8 +1,7 @@
-use std::{
-    fs,
-    io::{ErrorKind, Write},
-    path::Path,
-};
+use std::{fs, io::ErrorKind, path::Path};
+
+#[cfg(unix)]
+use std::io::Write;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};

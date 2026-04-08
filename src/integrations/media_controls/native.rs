@@ -243,7 +243,7 @@ impl Drop for HiddenWindow {
         use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::DestroyWindow};
 
         unsafe {
-            let _ = DestroyWindow(HWND(self.hwnd as isize));
+            let _ = DestroyWindow(HWND(self.hwnd));
         }
     }
 }
