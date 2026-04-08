@@ -122,6 +122,9 @@ impl NativeMediaControls {
     }
 
     pub fn pump_main_thread(&mut self) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        pump_windows_event_queue();
+
         Ok(())
     }
 }
@@ -194,30 +197,20 @@ fn bootstrap_macos_application() -> Result<()> {
 #[cfg(target_os = "windows")]
 struct HiddenWindow {
     hwnd: *mut c_void,
-    thread_id: u32,
-    join_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(target_os = "windows")]
 impl HiddenWindow {
     fn new() -> Result<Self> {
-        use std::{sync::mpsc, thread};
-
         use windows::{
-            Win32::{
-                System::Threading::GetCurrentThreadId,
-                UI::WindowsAndMessaging::{
-                    CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
-                    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-                },
+            Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE,
             },
             core::w,
         };
 
-        let (sender, receiver) = mpsc::sync_channel::<Result<(isize, u32)>>(1);
-        let join_handle = thread::spawn(move || unsafe {
-            let thread_id = GetCurrentThreadId();
-            let hwnd = match CreateWindowExW(
+        let hwnd = unsafe {
+            CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
                 w!("soundcloud-tui-media-controls"),
@@ -230,33 +223,12 @@ impl HiddenWindow {
                 None,
                 None,
                 None,
-            ) {
-                Ok(hwnd) => hwnd,
-                Err(error) => {
-                    let _ = sender.send(
-                        Err(error).context("could not create hidden Windows media controls window"),
-                    );
-                    return;
-                }
-            };
-
-            let _ = sender.send(Ok((hwnd.0 as isize, thread_id)));
-
-            let mut message = MSG::default();
-            while GetMessageW(&mut message, None, 0, 0).into() {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-        });
-
-        let (hwnd, thread_id) = receiver
-            .recv()
-            .context("could not receive hidden Windows media controls window handle")??;
+            )
+            .context("could not create hidden Windows media controls window")?
+        };
 
         Ok(Self {
-            hwnd: hwnd as *mut c_void,
-            thread_id,
-            join_handle: Some(join_handle),
+            hwnd: hwnd.0 as *mut c_void,
         })
     }
 
@@ -268,17 +240,29 @@ impl HiddenWindow {
 #[cfg(target_os = "windows")]
 impl Drop for HiddenWindow {
     fn drop(&mut self) {
-        use windows::Win32::{
-            Foundation::{LPARAM, WPARAM},
-            UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT},
-        };
+        use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::DestroyWindow};
 
         unsafe {
-            let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+            let _ = DestroyWindow(HWND(self.hwnd as isize));
         }
+    }
+}
 
-        if let Some(join_handle) = self.join_handle.take() {
-            let _ = join_handle.join();
+#[cfg(target_os = "windows")]
+fn pump_windows_event_queue() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_QUIT,
+    };
+
+    unsafe {
+        let mut message = MSG::default();
+        while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).into() {
+            if message.message == WM_QUIT {
+                break;
+            }
+
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
     }
 }
