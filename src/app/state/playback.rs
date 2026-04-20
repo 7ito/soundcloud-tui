@@ -219,6 +219,7 @@ impl AppState {
 
     pub(super) fn set_volume(&mut self, percent: f64) {
         let target = percent.clamp(0.0, 100.0);
+        self.player.volume_percent = target;
         self.queue_command(AppCommand::ControlPlayback(PlayerCommand::SetVolume {
             percent: target,
         }));

@@ -1158,6 +1158,40 @@ fn seek_and_volume_shortcuts_use_requested_keys() {
         }
         other => panic!("expected volume command, got {other:?}"),
     }
+    assert_eq!(app.player.volume_percent, 60.0);
+}
+
+#[test]
+fn repeated_volume_shortcuts_accumulate_before_backend_confirms() {
+    let mut app = AppState::new();
+    let track = dummy_track("soundcloud:tracks:11", "Buffered Track");
+    app.now_playing.track = Some(track.clone());
+    app.now_playing.title = track.title;
+    app.player.status = soundcloud_tui::app::state::PlaybackStatus::Buffering;
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('+'),
+        KeyModifiers::SHIFT,
+    )));
+    match app.take_pending_command() {
+        Some(AppCommand::ControlPlayback(PlayerCommand::SetVolume { percent })) => {
+            assert_eq!(percent, 60.0)
+        }
+        other => panic!("expected first volume command, got {other:?}"),
+    }
+
+    app.dispatch_event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('+'),
+        KeyModifiers::SHIFT,
+    )));
+    match app.take_pending_command() {
+        Some(AppCommand::ControlPlayback(PlayerCommand::SetVolume { percent })) => {
+            assert_eq!(percent, 70.0)
+        }
+        other => panic!("expected second volume command, got {other:?}"),
+    }
+
+    assert_eq!(app.player.volume_percent, 70.0);
 }
 
 #[test]
