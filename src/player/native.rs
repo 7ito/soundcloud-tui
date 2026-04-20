@@ -1,23 +1,23 @@
 use std::{
     collections::VecDeque,
     sync::{
+        Arc, Mutex, Once,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, TryRecvError},
-        Arc, Mutex, Once,
     },
     thread,
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     FromSample, SampleFormat, SizedSample, Stream, StreamConfig, SupportedStreamConfig,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use log::{debug, info, warn};
 
 use crate::{
-    config::paths::AppPaths,
+    config::{paths::AppPaths, settings::Settings},
     player::{backend::PlayerBackend, command::PlayerCommand, event::PlayerEvent},
     visualizer::VisualizerTap,
 };
@@ -29,6 +29,16 @@ const MAX_REFILL_PACKETS_PER_TICK: usize = 8;
 const MAX_REFILL_TIME_PER_TICK: Duration = Duration::from_millis(10);
 const POSITION_EVENT_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_VOLUME_PERCENT: f32 = 50.0;
+
+fn load_initial_volume_percent(paths: &AppPaths) -> f32 {
+    match Settings::load(paths) {
+        Ok(settings) => settings.volume_percent.min(100) as f32,
+        Err(error) => {
+            warn!("failed to load persisted volume setting: {error}");
+            DEFAULT_VOLUME_PERCENT
+        }
+    }
+}
 
 pub struct NativePlayerBackend {
     shared: Arc<Mutex<OutputState>>,
@@ -58,10 +68,10 @@ enum DecoderLoopDirective {
 }
 
 impl NativePlayerBackend {
-    pub fn spawn(_paths: &AppPaths, visualizer_tap: VisualizerTap) -> Result<Self> {
+    pub fn spawn(paths: &AppPaths, visualizer_tap: VisualizerTap) -> Result<Self> {
         init_ffmpeg()?;
 
-        let output = OutputStreamContext::open(visualizer_tap)?;
+        let output = OutputStreamContext::open(visualizer_tap, load_initial_volume_percent(paths))?;
         let (event_tx, event_rx) = mpsc::channel();
 
         Ok(Self {
@@ -229,7 +239,9 @@ impl PlayerBackend for NativePlayerBackend {
             Ok(event) => {
                 if matches!(
                     event,
-                    PlayerEvent::TrackEnded | PlayerEvent::BackendError(_) | PlayerEvent::PlaybackStopped
+                    PlayerEvent::TrackEnded
+                        | PlayerEvent::BackendError(_)
+                        | PlayerEvent::PlaybackStopped
                 ) {
                     self.active_decoder = None;
                 }
@@ -257,7 +269,7 @@ struct OutputStreamContext {
 }
 
 impl OutputStreamContext {
-    fn open(visualizer_tap: VisualizerTap) -> Result<Self> {
+    fn open(visualizer_tap: VisualizerTap, initial_volume_percent: f32) -> Result<Self> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -274,6 +286,7 @@ impl OutputStreamContext {
             channels,
             sample_rate,
             max_samples,
+            initial_volume_percent,
         )));
 
         visualizer_tap.configure(sample_rate);
@@ -317,14 +330,19 @@ struct OutputState {
 }
 
 impl OutputState {
-    fn new(channels: usize, sample_rate: u32, max_samples: usize) -> Self {
+    fn new(
+        channels: usize,
+        sample_rate: u32,
+        max_samples: usize,
+        initial_volume_percent: f32,
+    ) -> Self {
         Self {
             buffer: VecDeque::with_capacity(max_samples.min(16_384)),
             channels,
             sample_rate,
             max_samples,
             paused: false,
-            volume: DEFAULT_VOLUME_PERCENT / 100.0,
+            volume: initial_volume_percent.clamp(0.0, 100.0) / 100.0,
             played_frames: 0,
             error: None,
         }
@@ -585,9 +603,9 @@ impl PlaybackSession {
                 }
                 None => {
                     if !self.draining {
-                        self.decoder
-                            .send_eof()
-                            .with_context(|| format!("could not drain decoder for {}", self.title))?;
+                        self.decoder.send_eof().with_context(|| {
+                            format!("could not drain decoder for {}", self.title)
+                        })?;
                         self.draining = true;
                     }
 
@@ -1105,7 +1123,10 @@ mod tests {
             let output_samples = unsafe {
                 ffmpeg::ffi::swr_get_out_samples(resampler.as_mut_ptr(), input.samples() as i32)
             };
-            assert!(output_samples > 0, "resampler should report output capacity");
+            assert!(
+                output_samples > 0,
+                "resampler should report output capacity"
+            );
 
             let mut output = ffmpeg::frame::Audio::empty();
             unsafe {
@@ -1123,7 +1144,8 @@ mod tests {
         }
 
         loop {
-            let output_samples = unsafe { ffmpeg::ffi::swr_get_out_samples(resampler.as_mut_ptr(), 0) };
+            let output_samples =
+                unsafe { ffmpeg::ffi::swr_get_out_samples(resampler.as_mut_ptr(), 0) };
             if output_samples <= 0 {
                 break;
             }

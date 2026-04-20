@@ -1195,6 +1195,20 @@ fn repeated_volume_shortcuts_accumulate_before_backend_confirms() {
 }
 
 #[test]
+fn app_uses_persisted_volume_for_runtime_and_shutdown_settings() {
+    let settings = Settings {
+        volume_percent: 73,
+        ..Settings::default()
+    };
+    let mut app = AppState::new_with_persistence(settings, RecentlyPlayedStore::default());
+
+    assert_eq!(app.player.volume_percent, 73.0);
+
+    app.player.volume_percent = 64.4;
+    assert_eq!(app.persistent_settings().volume_percent, 64);
+}
+
+#[test]
 fn search_input_shortcuts_edit_query() {
     let mut app = AppState::new();
     app.focus = Focus::Search;

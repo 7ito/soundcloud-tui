@@ -494,7 +494,7 @@ impl AppState {
         self.playback_plan = PlaybackPlanState::default();
         self.player = PlayerState {
             status: PlaybackStatus::Stopped,
-            volume_percent: 50.0,
+            volume_percent: self.settings.volume_percent as f64,
             position_seconds: 0.0,
             duration_seconds: None,
             shuffle_enabled: false,

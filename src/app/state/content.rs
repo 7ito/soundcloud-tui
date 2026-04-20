@@ -430,6 +430,12 @@ impl AppState {
         &self.settings
     }
 
+    pub fn persistent_settings(&self) -> Settings {
+        let mut settings = self.settings.clone();
+        settings.volume_percent = self.player.volume_percent.round().clamp(0.0, 100.0) as u8;
+        settings
+    }
+
     pub fn theme(&self) -> Theme {
         Theme::from_settings(&self.settings)
     }

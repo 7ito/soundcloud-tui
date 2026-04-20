@@ -121,6 +121,7 @@ pub struct Settings {
     pub theme: String,
     pub show_help_on_startup: bool,
     pub seek_duration_ms: u64,
+    pub volume_percent: u8,
     pub volume_increment: u8,
     pub tick_rate_ms: u64,
     pub text_emphasis: bool,
@@ -174,6 +175,7 @@ impl Default for Settings {
             theme: "SoundCloud".to_string(),
             show_help_on_startup: true,
             seek_duration_ms: 5000,
+            volume_percent: 50,
             volume_increment: 10,
             tick_rate_ms: 250,
             text_emphasis: true,
@@ -251,6 +253,8 @@ impl Settings {
                 self.set_keybinding(action, normalized);
             }
         }
+
+        self.volume_percent = self.volume_percent.min(100);
 
         if !theme_preset_names().iter().any(|name| *name == self.theme) {
             self.theme = "SoundCloud".to_string();

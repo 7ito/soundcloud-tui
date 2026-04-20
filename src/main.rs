@@ -214,6 +214,11 @@ async fn run() -> Result<()> {
         }
     }
 
+    let persisted_settings = app.persistent_settings();
+    if let Err(error) = persisted_settings.save(&paths) {
+        warn!("failed to persist settings on shutdown: {error}");
+    }
+
     info!("shutting down soundcloud-tui");
 
     Ok(())
